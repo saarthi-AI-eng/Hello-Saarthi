@@ -3,19 +3,20 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool, create_retriever_tool
 from langchain_core.messages import SystemMessage, HumanMessage
 from typing import List, Dict, Any
+import logging
 
 from src.prompts.loader import get_prompt
 from src.tools.utilities import calculator
 from src.tools.kb_ops import get_retriever
 from src.schemas.models import ExpertResponse, ExpertName, Citation
 
+logger = logging.getLogger(__name__)
+
 def get_expert_tools(expert_name: str):
     """"
     Returns the tools available to the expert.
     """
     tools = [calculator]
-    
-    # Get Retriever Tool
     retriever = get_retriever(expert_name)
     if retriever:
         retriever_tool = create_retriever_tool(
@@ -38,12 +39,11 @@ def run_expert(expert_name: str, query: str, mode: str = "fast") -> ExpertRespon
     """
     Runs the expert agent and returns a structured ExpertResponse.
     """
-    print(f"--- Running Expert: {expert_name} (Mode: {mode}) ---")
+    logger.info(f"--- Running Expert: {expert_name} (Mode: {mode}) ---")
     
     tools = get_expert_tools(expert_name)
     prompt_str = get_prompt("expert_system", expert_name=expert_name, mode=mode)
     
-    # Strict Prompting for Knowledge Fallback
     if expert_name == "notes_agent":
         prompt_str += "\n\nCRITICAL: You must answer ONLY from the provided context (citations). " \
                       "If the answer is NOT in the context, you MUST set 'is_knowledge_present' to False " \
@@ -51,12 +51,9 @@ def run_expert(expert_name: str, query: str, mode: str = "fast") -> ExpertRespon
     
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
     
-    # Define the structured output LLM
-    # We use this for the FINAL step to ensure strict adherence
     structured_llm = llm.with_structured_output(ExpertResponse, method="json_schema", strict=True)
     
     if mode == "planning":
-        # Planning Mode: Use LLM with tools
         llm_with_tools = llm.bind_tools(tools)
         
         messages = [
@@ -64,18 +61,15 @@ def run_expert(expert_name: str, query: str, mode: str = "fast") -> ExpertRespon
             HumanMessage(content=query)
         ]
         
-        # Simple tool invocation loop (1 turn for demo)
         response = llm_with_tools.invoke(messages)
         
         tool_outputs = []
         
-        # Handle Tool Calls
         if response.tool_calls:
             for tool_call in response.tool_calls:
                 t_name = tool_call["name"]
                 t_args = tool_call["args"]
                 
-                # Execution
                 result = "Tool Not Found"
                 for t in tools:
                     if t.name == t_name:
@@ -91,7 +85,6 @@ def run_expert(expert_name: str, query: str, mode: str = "fast") -> ExpertRespon
                 
                 tool_outputs.append(f"Tool `{t_name}` output: {str(result)[:1000]}...") 
             
-            # Synthesize final answer using Structured LLM
             final_prompt = (
                 f"The user asked: {query}. You used tools and got these results: {tool_outputs}. "
                 f"Please synthesize the answer and provide citations if available in the tool outputs. "
@@ -122,14 +115,10 @@ def run_expert(expert_name: str, query: str, mode: str = "fast") -> ExpertRespon
         ]
         return structured_llm.invoke(messages)
 
-# Wrapper for the node
 from src.utils.state import AgentState
 
 def notes_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    # state["sub_queries"] is now a list of SubQuery objects, not dicts
-    # Update logic to handle Pydantic objects from router
-    
     res = run_expert("notes_agent", query, mode="planning") 
     return {"results": {"notes_agent": res}}
 

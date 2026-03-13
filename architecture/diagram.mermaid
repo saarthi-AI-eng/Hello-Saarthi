@@ -1,22 +1,22 @@
 graph TD
-    User(["👤 User Input"]) --> UI["🖥️ Streamlit UI"]
-    UI --> Toggle{"🧠 Mind Mode?"}
+    User([" User Input"]) --> UI[" Streamlit UI"]
+    UI --> Toggle{" Mind Mode?"}
 
     Toggle -->|OFF| Orchestrator
     Toggle -->|ON| FanOut
 
-    subgraph "⚙️ Orchestration Layer"
+    subgraph "️ Orchestration Layer"
         Orchestrator["Orchestrator Agent"] -->|"1. Check KBs"| KB_Manager["KB State Manager"]
         KB_Manager -->|"2. Decompose"| Decomp["Query Decomposition"]
         Decomp -->|"3. Route"| Router["Router (GPT-4o)"]
     end
 
-    subgraph "📌 Expert Layer – Normal Flow"
-        Router -->|notes| N["📝 Notes Agent"]
-        Router -->|books| B["📚 Books Agent"]
-        Router -->|video| V["🎥 Video Agent"]
-        Router -->|calculator| C["🧮 Calculator Agent"]
-        Router -->|general| S["🤖 Saarthi Agent"]
+    subgraph " Expert Layer – Normal Flow"
+        Router -->|notes| N[" Notes Agent"]
+        Router -->|books| B[" Books Agent"]
+        Router -->|video| V[" Video Agent"]
+        Router -->|calculator| C[" Calculator Agent"]
+        Router -->|general| S[" Saarthi Agent"]
 
         N -->|"is_knowledge_present=False"| B
 
@@ -27,17 +27,17 @@ graph TD
         S --> S_LLM["Conversational LLM"]
     end
 
-    subgraph "🧠 Mind Mode Flow"
-        FanOut["Fan-Out Node"] --> MN["📝 Notes Agent"]
-        FanOut --> MB["📚 Books Agent"]
-        FanOut --> MV["🎥 Video Agent"]
-        MN --> Mind["🧠 Mind Agent (GPT-4.1)"]
+    subgraph " Mind Mode Flow"
+        FanOut["Fan-Out Node"] --> MN[" Notes Agent"]
+        FanOut --> MB[" Books Agent"]
+        FanOut --> MV[" Video Agent"]
+        MN --> Mind[" Mind Agent (GPT-4.1)"]
         MB --> Mind
         MV --> Mind
         Mind -->|"Cited Answer ¹²³"| Synth
     end
 
-    subgraph "📂 Data Layer"
+    subgraph " Data Layer"
         NKB[("Notes FAISS\n(JSON → TXT)")] -.->|retrieve| N_RAG
         BKB[("Books FAISS\n(PDF + Docling OCR)")] -.->|retrieve| B_RAG
         VKB[("Video FAISS\n(488 Transcripts)")] -.->|retrieve| V_RAG

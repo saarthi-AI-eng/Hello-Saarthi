@@ -1,15 +1,18 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.schemas.models import ExpertResponse, ExpertName
+import logging
+
+logger = logging.getLogger(__name__)
 
 def run_saarthi_agent(query: str, messages: list = []) -> ExpertResponse:
     """
     Executes the Saarthi agent: A helpful, humble, and friendly conversational assistant.
     Focused on engineering students in the signals domain.
     """
-    print(f"--- Running Saarthi (General Agent) for: {query} ---")
+    logger.info(f"--- Running Saarthi (General Agent) for: {query} ---")
     
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.7) # Slightly higher temp for conversation
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.7)
     
     system_prompt = (
         "You are Saarthi, a friendly and humble AI assistant designed to help engineering students, "

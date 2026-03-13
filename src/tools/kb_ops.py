@@ -3,6 +3,9 @@ import json
 import time
 from pathlib import Path
 from typing import List, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -20,7 +23,7 @@ def load_pdf_with_docling(file_path: str) -> List[Document]:
     Loads a PDF using Docling, which handles OCR and layout analysis.
     Returns a list of LangChain Documents (one per page or one for whole doc).
     """
-    print(f"Converting {file_path} with Docling...")
+    logger.info(f"Converting {file_path} with Docling...")
     try:
         converter = DocumentConverter()
         result = converter.convert(file_path)
@@ -32,7 +35,7 @@ def load_pdf_with_docling(file_path: str) -> List[Document]:
         # Metadata is minimal for now.
         return [Document(page_content=markdown_text, metadata={"source": os.path.basename(file_path)})]
     except Exception as e:
-        print(f"Docling failed for {file_path}: {e}")
+        logger.error(f"Docling failed for {file_path}: {e}")
         return []
 
 def get_kb_path(expert_name: str) -> Path:
@@ -61,7 +64,7 @@ def get_retriever(expert_name: str) -> Optional[VectorStoreRetriever]:
         )
         return vector_store.as_retriever(search_kwargs={"k": 5})
     except Exception as e:
-        print(f"Error loading vector store for {expert_name}: {e}")
+        logger.error(f"Error loading vector store for {expert_name}: {e}")
         return None
 
 def ingest_documents(expert_name: str) -> bool:
@@ -70,24 +73,24 @@ def ingest_documents(expert_name: str) -> bool:
     """
     kb_path = get_kb_path(expert_name)
     if not kb_path.exists():
-        print(f"KB directory {kb_path} not found.")
+        logger.warning(f"KB directory {kb_path} not found.")
         return False
         
     # 1. Load Documents
     documents = []
-    print(f"Scanning {kb_path} for files...")
+    logger.info(f"Scanning {kb_path} for files...")
     
     # Load PDFs via Docling
     for file_path in kb_path.glob("*.pdf"):
         try:
             docs = load_pdf_with_docling(str(file_path))
             if not docs or not docs[0].page_content.strip():
-                 print(f"WARNING: Docling extracted no text for {file_path.name}.")
+                 logger.warning(f"WARNING: Docling extracted no text for {file_path.name}.")
             else:
-                 print(f"Docling extracted {len(docs[0].page_content)} characters from {file_path.name}")
+                 logger.info(f"Docling extracted {len(docs[0].page_content)} characters from {file_path.name}")
             documents.extend(docs)
         except Exception as e:
-            print(f"Failed to load {file_path.name}: {e}")
+            logger.error(f"Failed to load {file_path.name}: {e}")
     
     # Load TXT files directly (for video transcripts etc.)
     for file_path in kb_path.glob("*.txt"):
@@ -96,12 +99,12 @@ def ingest_documents(expert_name: str) -> bool:
                 text = f.read().strip()
             if text:
                 documents.append(Document(page_content=text, metadata={"source": file_path.name}))
-                print(f"Loaded {len(text)} characters from {file_path.name}")
+                logger.info(f"Loaded {len(text)} characters from {file_path.name}")
         except Exception as e:
-            print(f"Failed to load {file_path.name}: {e}")
+            logger.error(f"Failed to load {file_path.name}: {e}")
             
     if not documents:
-        print(f"No documents found for {expert_name}.")
+        logger.warning(f"No documents found for {expert_name}.")
         return False
         
     # 2. Split Text
@@ -110,17 +113,17 @@ def ingest_documents(expert_name: str) -> bool:
         chunk_overlap=200
     )
     splits = text_splitter.split_documents(documents)
-    print(f"Created {len(splits)} chunks for {expert_name}.")
+    logger.info(f"Created {len(splits)} chunks for {expert_name}.")
     
     # 3. Vectorize and Index
-    print(f"Embedding and indexing {expert_name}...")
+    logger.info(f"Embedding and indexing {expert_name}...")
     embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
     vector_store = FAISS.from_documents(documents=splits, embedding=embeddings)
     
     # 4. Save Index
     index_path = get_index_path(expert_name)
     vector_store.save_local(str(index_path))
-    print(f"Index saved to {index_path}")
+    logger.info(f"Index saved to {index_path}")
     return True
 
 def check_and_update_kb_index(expert_name: str) -> bool:
@@ -159,7 +162,7 @@ def check_and_update_kb_index(expert_name: str) -> bool:
     index_missing = not get_index_path(expert_name).exists()
     
     if last_modified > prev_modified or index_missing:
-        print(f"Updating Knowledge Base for {expert_name}...")
+        logger.info(f"Updating Knowledge Base for {expert_name}...")
         success = ingest_documents(expert_name)
         if success:
             status[expert_name] = last_modified

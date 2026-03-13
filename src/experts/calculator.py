@@ -2,8 +2,11 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.tools import tool
 import numexpr
+import logging
 
 from src.schemas.models import ExpertResponse, ExpertName
+
+logger = logging.getLogger(__name__)
 
 @tool
 def calculate(expression: str) -> str:
@@ -12,7 +15,6 @@ def calculate(expression: str) -> str:
     Example: "50 * 20", "2**10", "sin(10)"
     """
     try:
-        # numexpr.evaluate returns a numpy array-like, convert to scalar/str
         return str(numexpr.evaluate(expression).item())
     except Exception as e:
         return f"Error: {e}"
@@ -21,15 +23,13 @@ def run_calculator_agent(query: str) -> ExpertResponse:
     """
     Executes the calculator agent.
     """
-    print(f"--- Running Calculator Agent for: {query} ---")
+    logger.info(f"--- Running Calculator Agent for: {query} ---")
     
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
     
-    # Bind the calculator tool
     llm_with_tools = llm.bind_tools([calculate])
     
     try:
-        # 1. LLM decides what to calculate
         messages = [
             SystemMessage(content="You are a calculator agent. Use the 'calculate' tool to solve math problems. Return the final answer clearly."),
             HumanMessage(content=query)
@@ -38,7 +38,7 @@ def run_calculator_agent(query: str) -> ExpertResponse:
         
         content = response.content
         
-        # 2. Execute tool if called
+        content = response.content
         if response.tool_calls:
             for tool_call in response.tool_calls:
                 if tool_call["name"] == "calculate":
@@ -50,7 +50,6 @@ def run_calculator_agent(query: str) -> ExpertResponse:
                     else:
                         content = "Could not parse expression."
         
-        # If no tool called, maybe it just answered (e.g. "1+1 is 2")
         if not content:
             content = "I could not calculate that."
             

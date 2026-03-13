@@ -7,11 +7,12 @@ from src.experts.saarthi import saarthi_agent_node
 from src.experts.video import video_agent_node
 from src.experts.mind import mind_fan_out_node, mind_agent_node
 from src.schemas.models import ExpertResponse
+import logging
+
+logger = logging.getLogger(__name__)
 
 def create_graph():
     workflow = StateGraph(AgentState)
-    
-    # Add Nodes
     workflow.add_node("orchestrator", orchestrator_node)
     workflow.add_node("notes_agent", notes_agent_node)
     workflow.add_node("books_agent", books_agent_node)
@@ -21,12 +22,9 @@ def create_graph():
     workflow.add_node("mind_fan_out", mind_fan_out_node)
     workflow.add_node("mind_agent", mind_agent_node)
     
-    # Define Entry Point
     workflow.set_entry_point("orchestrator")
     
-    # Logic: Router -> Expert (check mind_mode first)
     def route_from_orchestrator(state):
-        # If Mind Mode is ON, fan-out to all RAG agents
         if state.get("mind_mode", False):
             return "mind_fan_out"
         
@@ -44,13 +42,13 @@ def create_graph():
         else:
             return "saarthi_agent"  
 
-    # Logic: Notes -> Books (Fallback) or END
+
     def route_from_notes(state):
         results = state.get("results", {})
         notes_res = results.get("notes_agent")
         
         if notes_res and hasattr(notes_res, "is_knowledge_present") and not notes_res.is_knowledge_present:
-            print("--- Knowledge not found in Notes. Falling back to Books Agent ---")
+            logger.info("--- Knowledge not found in Notes. Falling back to Books Agent ---")
             return "books_agent"
         
         return END
@@ -78,11 +76,7 @@ def create_graph():
         }
     )
     
-    # Mind Mode flow: fan_out -> mind_agent -> END
-    workflow.add_edge("mind_fan_out", "mind_agent")
     workflow.add_edge("mind_agent", END)
-    
-    # Normal flow edges
     workflow.add_edge("books_agent", END)
     workflow.add_edge("calculator_agent", END)
     workflow.add_edge("saarthi_agent", END)

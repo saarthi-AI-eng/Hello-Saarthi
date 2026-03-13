@@ -1,7 +1,6 @@
-"""
-Mind Agent: Synthesizes responses from all RAG agents into one rich, cited answer.
-Uses GPT-5.2 for superior reasoning and synthesis.
-"""
+import logging
+
+logger = logging.getLogger(__name__)
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -40,17 +39,17 @@ def mind_fan_out_node(state: AgentState):
     Fan-out node: Queries all 3 RAG agents and collects their responses.
     """
     query = state["query"]
-    print(f"--- 🧠 Mind Mode: Fan-out to all RAG agents for: {query} ---")
+    logger.info(f"--- Mind Mode: Fan-out to all RAG agents for: {query} ---")
 
     agent_results = {}
     for agent_name in ["notes_agent", "books_agent", "video_agent"]:
         try:
-            print(f"--- 🧠 Querying {agent_name}... ---")
+            logger.info(f"--- Querying {agent_name}... ---")
             res = run_expert(agent_name, query, mode="planning")
             agent_results[agent_name] = res
-            print(f"--- 🧠 {agent_name}: confidence={res.confidence_score}, knowledge_present={res.is_knowledge_present} ---")
+            logger.info(f"--- {agent_name}: confidence={res.confidence_score}, knowledge_present={res.is_knowledge_present} ---")
         except Exception as e:
-            print(f"--- 🧠 {agent_name} failed: {e} ---")
+            logger.error(f"--- {agent_name} failed: {e} ---")
 
     return {"results": agent_results}
 
@@ -63,7 +62,7 @@ def mind_agent_node(state: AgentState):
     query = state["query"]
     results = state.get("results", {})
 
-    print(f"--- 🧠 Mind Agent synthesizing... ---")
+    logger.info(f"--- Mind Agent synthesizing... ---")
 
     # Build context from all agent responses
     agent_sections = []
@@ -114,6 +113,6 @@ Use proper LaTeX for any mathematical expressions."""
     ]
 
     response = structured_llm.invoke(messages)
-    print(f"--- 🧠 Mind Agent done: {len(response.references)} citations ---")
+    logger.info(f"--- Mind Agent done: {len(response.references)} citations ---")
 
     return {"results": {"mind_agent": response}}
