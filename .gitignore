@@ -1,0 +1,28 @@
+# Backend-only repo – Python & env
+.venv/
+venv/
+env/
+*.pyc
+__pycache__/
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+
+# Env and secrets
+.env
+.env.local
+saarthi_backend/.env
+
+# Uploads (user content)
+uploads/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Logs
+*.log
