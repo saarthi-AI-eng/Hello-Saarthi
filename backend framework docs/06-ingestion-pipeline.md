@@ -45,6 +45,17 @@ The backend may expose **ingestion APIs** (e.g. trigger by POST) or **CLI/script
 - **Embedding failure**: Log, retry with backoff; do not commit partial chunk.
 - **Duplicate video_id**: Upsert by video_id (replace or skip based on policy).
 
+### 2.5 Video structured (Option 3 — hybrid, math/ML lectures)
+
+For **high-accuracy RAG** (tutoring, exams, precise concepts): convert selected videos to **structured notes** (textbook-style, LaTeX), chunk **by meaning** (not time), then ingest. Pipeline:
+
+1. **Input**: `transcripts/{video_id}.json` (from Layer 1). Video title from production JSONL.
+2. **Convert**: LLM rewrites transcript → textbook-style explanation; all math in LaTeX; logical sections (e.g. ## Model, ## Objective, ## Solution). Preserve intent, fix ASR errors.
+3. **Chunk**: By section (one concept per chunk); if a section is long, split by paragraph under same section title. Max chunk size ~3800 chars.
+4. **Store**: `vector_data_structured/{video_id}.json` with id, text, metadata (video_id, source: "video_structured", content_type: "video_structured", priority: 1.0, title, section_title, section_index). See **vector-db-text-format.txt** §2b.
+
+**Hybrid**: Keep time-based chunks in `vector_data/` (content_type=video) for all videos. Add `vector_data_structured/` only for selected videos (manifest). At retrieval, prefer video_structured when available (e.g. by priority or content_type filter). Script: `build_structured_video_data.py` (--video-id or --manifest).
+
 ---
 
 ## 3. Notes Ingestion

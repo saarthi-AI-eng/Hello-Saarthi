@@ -1,0 +1,217 @@
+================================================================================
+VECTOR DB TEXT FORMAT — EXACT FORMAT FOR INDEXED CHUNKS
+Saarthi.ai Backend Framework
+================================================================================
+
+Each document stored in the vector DB has: id, text, metadata.
+This file defines the EXACT format the "text" field and metadata must follow
+so that retrieval and citations work correctly.
+
+================================================================================
+1. NOTES CHUNKS (Theory Expert — Notes KB)
+================================================================================
+
+RULE: One chunk = one logical unit (one definition, one concept, or one full equation).
+      Section/heading at start of text. Plain text or LaTeX. No HTML.
+
+--- FORMAT ---
+
+id:         <unique_chunk_id>   e.g. note_chunk_42, note_chunk_ss_03_02_001
+text:       <section_label>. <definition_or_explanation_or_equation>
+
+metadata:
+  source_id:    <string>     e.g. note_chunk_42
+  title:        <string>     e.g. "Notes Page 42 - Fourier Transform"
+  content_type: "notes"
+  page:         <int>        optional, e.g. 42
+  subject:      <string>     optional, e.g. SS, DSP, PR, MBSA
+
+--- EXAMPLE 1 (definition) ---
+
+id: note_chunk_42
+text: Fourier Transform (Definition). The Fourier Transform of a continuous-time signal f(t) is defined as F(ω) = ∫_{-∞}^{∞} f(t) e^{-jωt} dt. It represents the signal in the frequency domain.
+
+metadata:
+  source_id: note_chunk_42
+  title: Notes Page 42 - Fourier Transform
+  content_type: notes
+  page: 42
+  subject: SS
+
+--- EXAMPLE 2 (equation block) ---
+
+id: note_chunk_ss_03_02_001
+text: Spectral Density. S_x(ω) = lim_{T→∞} (1/T) E[|X_T(ω)|^2]. It describes the distribution of power over frequency.
+
+metadata:
+  source_id: note_chunk_ss_03_02_001
+  title: Notes - Spectral Density (Section 3.2)
+  content_type: notes
+  page: 18
+  subject: SS
+
+--- DO NOT ---
+- Put only raw LaTeX with no surrounding words.
+- Split one definition or one equation across two chunks.
+- Store only "Notes Page 42" with no actual content in text.
+- Use HTML or markdown in the text field.
+
+================================================================================
+2. VIDEO TRANSCRIPT CHUNKS (Theory Expert — Video KB)
+================================================================================
+
+RULE: One chunk = one time segment (e.g. 60 seconds, 10 sec overlap).
+      Text = clean transcript for that segment only. No timestamps inside text.
+
+--- FORMAT ---
+
+id:         <unique_chunk_id>   e.g. video_abc123_270_330
+text:       <transcript_for_this_segment_only>
+
+metadata:
+  source_id:    <string>     e.g. video_abc123 or YouTube id
+  title:        <string>     video title
+  content_type: "video"
+  start_sec:    <float>     start time in seconds
+  end_sec:      <float>     end time in seconds
+
+--- EXAMPLE ---
+
+id: video_abc123_270_330
+text: In this part we define the continuous-time Fourier transform. We write F of omega equals the integral from minus infinity to infinity of f of t times e to the minus j omega t dt. This gives us the frequency representation of the signal.
+
+metadata:
+  source_id: abc123
+  title: Introduction to Fourier Transform
+  content_type: video
+  start_sec: 270.0
+  end_sec: 330.0
+
+--- DO NOT ---
+- Include timestamp lines (e.g. 00:04:30 --> 00:04:45) in the text.
+- Put the entire video transcript in one chunk.
+- Put video title or ID inside the text; keep them in metadata only.
+
+================================================================================
+2b. VIDEO STRUCTURED CHUNKS (Option 3 — Math/ML lectures, high-accuracy RAG)
+================================================================================
+
+RULE: One chunk = one logical section (concept, model, objective, solution).
+      Text = textbook-style explanation with LaTeX for equations. Chunk by meaning, not time.
+      Source: transcript converted via LLM → structured notes → section-based chunks.
+
+--- FORMAT ---
+
+id:         <unique_chunk_id>   e.g. q8Yzb-3hVR4_structured_01
+text:       <section_title>\n\n<explanation_with_LaTeX>
+
+metadata:
+  source_id:       <string>   video_id (YouTube id)
+  video_id:        <string>   same as source_id
+  title:           <string>   video title
+  content_type:    "video_structured"
+  source:          "video_structured"
+  priority:        <float>    1.0 (rank above raw video when both exist)
+  section_title:   <string>   e.g. "Model", "Objective", "Solution"
+  section_index:   <int>      order of section in the notes
+
+--- EXAMPLE ---
+
+id: q8Yzb-3hVR4_structured_01
+text: Model
+
+f(x, w) = \sum_{m=0}^{M} w_m x^m. The goal is to minimize the quadratic error E(w) = (1/2) \sum_{n=1}^{N} (f(x_n, w) - t_n)^2. The optimal weights are obtained by setting \partial E / \partial w = 0.
+
+metadata:
+  source_id: q8Yzb-3hVR4
+  video_id: q8Yzb-3hVR4
+  title: Regression: Least Squares Polynomial Regression
+  content_type: video_structured
+  source: video_structured
+  priority: 1.0
+  section_title: Model
+  section_index: 1
+
+--- TIMESTAMPS ---
+- start_sec/end_sec are approximate (from LLM section headers, e.g. ## Theorem (1:30–3:00)) for UI seek and temporal grounding. Fallback: 0 to video duration if not provided.
+
+--- MATH RIGOR ---
+- Preserve residue operator notation (e.g. Res_{z=z_i}(X(z)z^{n-1})); do not simplify to evaluated forms unless the lecture explicitly derives that step.
+
+--- DO NOT ---
+- Store raw transcript in video_structured; use converted textbook-style text only.
+- Split one equation or definition across two chunks.
+
+================================================================================
+3. CODE CHUNKS (Code Expert)
+================================================================================
+
+RULE: One chunk = one function or one logical code unit. Include docstring + signature + body (or docstring + signature only, per config).
+
+--- FORMAT ---
+
+id:         <unique_chunk_id>   e.g. code_assignment3_ex2_dft
+text:       <docstring_and_or_signature_and_body_plain_text>
+
+metadata:
+  source_id:       <string>   e.g. code_assignment3_ex2
+  title:           <string>   e.g. "Assignment 3, Exercise 2 - DFT"
+  content_type:    "code"
+  function_name:  <string>   optional
+  language:        <string>   e.g. python
+  source_file_path: <string> optional
+
+--- EXAMPLE ---
+
+id: code_assignment3_ex2_dft
+text: N-point DFT implementation. def dft(x): N = len(x); X = np.zeros(N, dtype=complex); for k in range(N): for n in range(N): X[k] += x[n] * np.exp(-2j * np.pi * k * n / N); return X
+
+metadata:
+  source_id: assignment_3_ex2
+  title: Assignment 3, Exercise 2 - DFT
+  content_type: code
+  function_name: dft
+  language: python
+
+================================================================================
+4. SOLVED EXERCISE CHUNKS (Problem-Solving Expert)
+================================================================================
+
+RULE: One chunk = one problem + solution (or one step if fine-grained). Full problem statement and solution text in one block.
+
+--- FORMAT ---
+
+id:         <unique_chunk_id>   e.g. exercise_ss_dft_01
+text:       <problem_statement>. Solution: <step_by_step_or_full_solution_text>
+
+metadata:
+  source_id:    <string>   e.g. exercise_ss_dft_01
+  title:        <string>   e.g. "Solved Exercise - DFT (SS Ch 4)"
+  content_type: "exercise"
+  subject:      <string>   optional, e.g. SS, DSP
+  topic:        <string>   optional, e.g. DFT
+
+--- EXAMPLE ---
+
+id: exercise_ss_dft_01
+text: Problem: Compute the 4-point DFT of the sequence x[n] = [1, 1, 1, 1]. Solution: Step 1. Write X[k] = sum_{n=0}^{3} x[n] W_4^{kn}. Step 2. For k=0: X[0]=4. For k=1: X[1]=0. For k=2: X[2]=0. For k=3: X[3]=0. Hence X[k] = [4, 0, 0, 0].
+
+metadata:
+  source_id: exercise_ss_dft_01
+  title: Solved Exercise - 4-point DFT (SS Ch 4)
+  content_type: exercise
+  subject: SS
+  topic: DFT
+
+================================================================================
+5. CITATION EXCERPT (How "excerpt" is built from stored text)
+================================================================================
+
+The backend uses the stored "text" to build the citation "excerpt" in the API response.
+- Use first N characters (e.g. 200–300) of the chunk text, or
+- Use first sentence(s) up to a limit.
+- Do not add timestamps to excerpt for notes/code/exercise; for video, timestamps come from metadata only.
+
+================================================================================
+END OF FORMAT SPECIFICATION
+================================================================================
