@@ -2,6 +2,8 @@
 
 Backend-only repository for **Saarthi.ai** (FastAPI). The frontend lives in a separate repo.
 
+> This PR restores the backend on `main` after the revert.
+
 ## Stack
 
 - **FastAPI** – REST API
