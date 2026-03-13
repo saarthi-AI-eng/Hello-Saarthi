@@ -1,0 +1,91 @@
+from langgraph.graph import StateGraph, END
+from src.utils.state import AgentState
+from src.orchestrator.nodes import orchestrator_node
+from src.experts.base import notes_agent_node, books_agent_node
+from src.experts.calculator import calculator_agent_node
+from src.experts.saarthi import saarthi_agent_node
+from src.experts.video import video_agent_node
+from src.experts.mind import mind_fan_out_node, mind_agent_node
+from src.schemas.models import ExpertResponse
+
+def create_graph():
+    workflow = StateGraph(AgentState)
+    
+    # Add Nodes
+    workflow.add_node("orchestrator", orchestrator_node)
+    workflow.add_node("notes_agent", notes_agent_node)
+    workflow.add_node("books_agent", books_agent_node)
+    workflow.add_node("calculator_agent", calculator_agent_node)
+    workflow.add_node("saarthi_agent", saarthi_agent_node)
+    workflow.add_node("video_agent", video_agent_node)
+    workflow.add_node("mind_fan_out", mind_fan_out_node)
+    workflow.add_node("mind_agent", mind_agent_node)
+    
+    # Define Entry Point
+    workflow.set_entry_point("orchestrator")
+    
+    # Logic: Router -> Expert (check mind_mode first)
+    def route_from_orchestrator(state):
+        # If Mind Mode is ON, fan-out to all RAG agents
+        if state.get("mind_mode", False):
+            return "mind_fan_out"
+        
+        expert = state.get("current_expert")
+        if expert == "notes_agent":
+            return "notes_agent"
+        elif expert == "books_agent":
+            return "books_agent"
+        elif expert == "calculator_agent":
+            return "calculator_agent"
+        elif expert == "saarthi_agent":
+            return "saarthi_agent"
+        elif expert == "video_agent":
+            return "video_agent"
+        else:
+            return "saarthi_agent"  
+
+    # Logic: Notes -> Books (Fallback) or END
+    def route_from_notes(state):
+        results = state.get("results", {})
+        notes_res = results.get("notes_agent")
+        
+        if notes_res and hasattr(notes_res, "is_knowledge_present") and not notes_res.is_knowledge_present:
+            print("--- Knowledge not found in Notes. Falling back to Books Agent ---")
+            return "books_agent"
+        
+        return END
+
+    workflow.add_conditional_edges(
+        "orchestrator",
+        route_from_orchestrator,
+        {
+            "notes_agent": "notes_agent",
+            "books_agent": "books_agent",
+            "calculator_agent": "calculator_agent",
+            "saarthi_agent": "saarthi_agent",
+            "video_agent": "video_agent",
+            "mind_fan_out": "mind_fan_out",
+            END: END
+        }
+    )
+    
+    workflow.add_conditional_edges(
+        "notes_agent",
+        route_from_notes,
+        {
+            "books_agent": "books_agent",
+            END: END
+        }
+    )
+    
+    # Mind Mode flow: fan_out -> mind_agent -> END
+    workflow.add_edge("mind_fan_out", "mind_agent")
+    workflow.add_edge("mind_agent", END)
+    
+    # Normal flow edges
+    workflow.add_edge("books_agent", END)
+    workflow.add_edge("calculator_agent", END)
+    workflow.add_edge("saarthi_agent", END)
+    workflow.add_edge("video_agent", END)
+    
+    return workflow.compile()

@@ -1,0 +1,13 @@
+__pycache__
+.env
+venv
+
+# Ignore other items
+.DS_Store
+Dataset/
+app.py
+assets/
+docs/
+knowledge_base/
+saarthi_graph.png
+tests/
