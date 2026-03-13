@@ -1,1 +1,0 @@
-# Saarthi Backend package
