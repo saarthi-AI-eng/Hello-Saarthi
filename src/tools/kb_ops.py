@@ -13,7 +13,6 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_core.documents import Document
-from docling.document_converter import DocumentConverter
 
 KB_STATUS_FILE = "kb_status.json"
 EMBEDDING_MODEL = "text-embedding-3-large"
@@ -23,6 +22,9 @@ def load_pdf_with_docling(file_path: str) -> List[Document]:
     Loads a PDF using Docling, which handles OCR and layout analysis.
     Returns a list of LangChain Documents (one per page or one for whole doc).
     """
+    # Lazy import: docling/pandas are heavy and only needed for PDF ingestion
+    from docling.document_converter import DocumentConverter
+
     logger.info(f"Converting {file_path} with Docling...")
     try:
         converter = DocumentConverter()

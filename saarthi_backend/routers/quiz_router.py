@@ -5,10 +5,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.dao import QuizAttemptDAO, QuizDAO, QuizQuestionDAO
 from saarthi_backend.deps import get_current_user, get_db, get_pagination
 from saarthi_backend.model import User
-from saarthi_backend.schema.pagination_schemas import PaginatedResponse, PaginationParams
+from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationParams
 from saarthi_backend.schema.quiz_schemas import (
     QuizAttemptResponse,
     QuizAttemptSubmitRequest,
@@ -18,6 +17,7 @@ from saarthi_backend.schema.quiz_schemas import (
     QuizQuestionUpdate,
     QuizResponse,
 )
+from saarthi_backend.service import quiz_service
 from saarthi_backend.utils.exceptions import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/quizzes", tags=["quizzes"])
@@ -40,16 +40,12 @@ async def list_quizzes(
     course_id: int | None = None,
 ):
     """List quizzes, optionally by course (paginated)."""
-    quizzes = await QuizDAO.list_all(
-        db,
-        course_id=course_id,
-        limit=pagination.limit,
-        offset=pagination.offset,
+    quizzes, total = await quiz_service.list_quizzes(
+        db, course_id=course_id, limit=pagination.limit, offset=pagination.offset
     )
-    total = await QuizDAO.count_all(db, course_id=course_id)
     out = []
     for q in quizzes:
-        questions = await QuizQuestionDAO.list_by_quiz(db, q.id)
+        _, questions = await quiz_service.get_quiz_with_questions(db, q.id)
         out.append(
             QuizResponse(
                 id=str(q.id),
@@ -75,10 +71,9 @@ async def get_quiz(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get quiz with questions (for taking quiz)."""
-    quiz = await QuizDAO.get_by_id(db, quiz_id)
+    quiz, questions = await quiz_service.get_quiz_with_questions(db, quiz_id)
     if not quiz:
         raise NotFoundError("Quiz not found.", details=None)
-    questions = await QuizQuestionDAO.list_by_quiz(db, quiz_id)
     return QuizDetailResponse(
         id=str(quiz.id),
         courseId=str(quiz.course_id) if quiz.course_id else None,
@@ -98,10 +93,9 @@ async def start_attempt(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Start a quiz attempt."""
-    quiz = await QuizDAO.get_by_id(db, quiz_id)
-    if not quiz:
+    a = await quiz_service.start_attempt(db, user.id, quiz_id)
+    if not a:
         raise NotFoundError("Quiz not found.", details=None)
-    a = await QuizAttemptDAO.create(db, user.id, quiz_id)
     await db.commit()
     return QuizAttemptResponse(
         id=str(a.id),
@@ -121,12 +115,8 @@ async def submit_attempt(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Submit attempt with score and answers."""
-    attempt = await QuizAttemptDAO.submit(
-        db,
-        attempt_id,
-        user.id,
-        score=body.score,
-        answers_json=body.answersJson,
+    attempt = await quiz_service.submit_attempt(
+        db, attempt_id, user.id, score=body.score, answers_json=body.answersJson
     )
     if not attempt:
         raise NotFoundError("Attempt not found.", details=None)
@@ -150,10 +140,7 @@ async def create_question(
     """Create a quiz question (admin/teacher only)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    quiz = await QuizDAO.get_by_id(db, quiz_id)
-    if not quiz:
-        raise NotFoundError("Quiz not found.", details=None)
-    q = await QuizQuestionDAO.create(
+    q = await quiz_service.create_question(
         db,
         quiz_id=quiz_id,
         question_text=body.questionText,
@@ -161,6 +148,8 @@ async def create_question(
         correct_index=body.correctIndex,
         sort_order=body.sortOrder,
     )
+    if not q:
+        raise NotFoundError("Quiz not found.", details=None)
     await db.commit()
     return _question_to_response(q)
 
@@ -176,20 +165,17 @@ async def update_question(
     """Update a quiz question (admin/teacher only)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    quiz = await QuizDAO.get_by_id(db, quiz_id)
-    if not quiz:
-        raise NotFoundError("Quiz not found.", details=None)
-    q = await QuizQuestionDAO.get_by_id(db, question_id)
-    if not q or q.quiz_id != quiz_id:
-        raise NotFoundError("Question not found.", details=None)
-    updated = await QuizQuestionDAO.update(
+    updated = await quiz_service.update_question(
         db,
-        question_id,
+        quiz_id=quiz_id,
+        question_id=question_id,
         question_text=body.questionText,
         options_json=body.optionsJson,
         correct_index=body.correctIndex,
         sort_order=body.sortOrder,
     )
+    if not updated:
+        raise NotFoundError("Question not found.", details=None)
     await db.commit()
     return _question_to_response(updated)
 
@@ -204,13 +190,9 @@ async def delete_question(
     """Delete a quiz question (admin/teacher only)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    quiz = await QuizDAO.get_by_id(db, quiz_id)
-    if not quiz:
-        raise NotFoundError("Quiz not found.", details=None)
-    q = await QuizQuestionDAO.get_by_id(db, question_id)
-    if not q or q.quiz_id != quiz_id:
-        raise NotFoundError("Question not found.", details=None)
-    await QuizQuestionDAO.delete(db, question_id)
+    deleted = await quiz_service.delete_question(db, quiz_id, question_id)
+    if not deleted:
+        raise NotFoundError("Quiz or question not found.", details=None)
     await db.commit()
 
 
@@ -222,10 +204,9 @@ async def list_my_attempts(
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
     """List current user's attempts for quiz (paginated)."""
-    attempts = await QuizAttemptDAO.list_by_user_quiz(
+    attempts, total = await quiz_service.list_attempts(
         db, user.id, quiz_id, limit=pagination.limit, offset=pagination.offset
     )
-    total = await QuizAttemptDAO.count_by_user_quiz(db, user.id, quiz_id)
     return PaginatedResponse(
         items=[
             QuizAttemptResponse(

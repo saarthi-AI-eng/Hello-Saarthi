@@ -1,5 +1,5 @@
 # Models package
-from .context_model import Base, ConversationContext
+from .context_model import Base
 from .user_model import RefreshToken, User
 from .course_model import Course, Enrollment, Assignment, AssignmentSubmission, Material, StreamItem
 from .video_model import Video, VideoProgress, VideoNote
@@ -10,7 +10,6 @@ from .chat_model import Conversation, ChatMessage
 
 __all__ = [
     "Base",
-    "ConversationContext",
     "User",
     "Conversation",
     "ChatMessage",

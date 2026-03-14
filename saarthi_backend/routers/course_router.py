@@ -1,20 +1,15 @@
-"""Courses, enrollments, assignments, materials, stream (under /api/courses)."""
+"""Courses, enrollments, assignments, materials, stream, file upload (under /api/courses)."""
+
+import uuid
+from pathlib import Path
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.dao import (
-    AssignmentDAO,
-    AssignmentSubmissionDAO,
-    CourseDAO,
-    EnrollmentDAO,
-    MaterialDAO,
-    StreamItemDAO,
-)
-from saarthi_backend.dao.course_dao import count_course_people, list_course_people
-from saarthi_backend.dao.notification_dao import NotificationDAO
 from saarthi_backend.deps import get_current_user, get_db, get_pagination
 from saarthi_backend.model import User
 from saarthi_backend.schema.course_schemas import (
@@ -30,14 +25,21 @@ from saarthi_backend.schema.course_schemas import (
     MaterialCreate,
     MaterialResponse,
     MaterialUpdate,
+    SearchItem,
+    SearchResponse,
     StreamItemCreate,
     StreamItemResponse,
     StreamItemUpdate,
 )
-from saarthi_backend.schema.pagination_schemas import PaginatedResponse, PaginationParams
+from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationParams
+from saarthi_backend.service import course_service
 from saarthi_backend.utils.exceptions import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/courses", tags=["courses"])
+
+# File upload for assignment attachments (no separate upload router; one router per DAO)
+_UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
+_MAX_UPLOAD_MB = 10
 
 
 def _course_to_response(c):
@@ -91,6 +93,38 @@ def _stream_to_response(s):
     )
 
 
+# ----- Search (no dedicated search_router; under course domain) -----
+@router.get("/search", response_model=SearchResponse)
+async def search(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    pagination: Annotated[PaginationParams, Depends(get_pagination)],
+    q: str = "",
+):
+    """Search courses, materials, videos. GET /api/courses/search?q=..."""
+    courses, materials, videos, total_courses, total_materials, total_videos = await course_service.search(
+        db, q, limit_per_type=pagination.limit, offset_per_type=pagination.offset
+    )
+    return SearchResponse(
+        limit=pagination.limit,
+        offset=pagination.offset,
+        courses=[
+            SearchItem(type="course", id=str(c.id), title=c.title, subtitle=c.code, link=f"/courses/{c.id}")
+            for c in courses
+        ],
+        materials=[
+            SearchItem(type="material", id=str(m.id), title=m.title, subtitle=m.type or "", link=m.url or "")
+            for m in materials
+        ],
+        videos=[
+            SearchItem(type="video", id=str(v.id), title=v.title, subtitle=f"{v.duration_seconds}s", link=f"/videos/{v.id}")
+            for v in videos
+        ],
+        totalCourses=total_courses,
+        totalMaterials=total_materials,
+        totalVideos=total_videos,
+    )
+
+
 # ----- Courses -----
 @router.get("", response_model=PaginatedResponse[CourseResponse])
 async def list_courses(
@@ -98,8 +132,7 @@ async def list_courses(
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
     """List all courses (paginated)."""
-    courses = await CourseDAO.list_all(db, limit=pagination.limit, offset=pagination.offset)
-    total = await CourseDAO.count_all(db)
+    courses, total = await course_service.list_courses(db, limit=pagination.limit, offset=pagination.offset)
     return PaginatedResponse(
         items=[_course_to_response(c) for c in courses],
         total=total,
@@ -115,13 +148,12 @@ async def my_enrollments(
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
     """List current user's enrollments with course details (paginated)."""
-    enrollments = await EnrollmentDAO.list_by_user(
+    enrollments, total = await course_service.list_my_enrollments(
         db, user.id, limit=pagination.limit, offset=pagination.offset
     )
-    total = await EnrollmentDAO.count_by_user(db, user.id)
     out = []
     for e in enrollments:
-        course = await CourseDAO.get_by_id(db, e.course_id)
+        course = await course_service.get_course(db, e.course_id)
         if not course:
             continue
         out.append(
@@ -147,7 +179,7 @@ async def get_course(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get course by id."""
-    course = await CourseDAO.get_by_id(db, course_id)
+    course = await course_service.get_course(db, course_id)
     if not course:
         raise NotFoundError("Course not found.", details=None)
     return _course_to_response(course)
@@ -160,13 +192,12 @@ async def list_course_people_route(
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
     """List people enrolled in the course (paginated)."""
-    course = await CourseDAO.get_by_id(db, course_id)
+    course = await course_service.get_course(db, course_id)
     if not course:
         raise NotFoundError("Course not found.", details=None)
-    pairs = await list_course_people(
+    pairs, total = await course_service.list_course_people_paginated(
         db, course_id, limit=pagination.limit, offset=pagination.offset
     )
-    total = await count_course_people(db, course_id)
     return PaginatedResponse(
         items=[
             CoursePersonResponse(
@@ -191,7 +222,7 @@ async def create_course(
     """Create course (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    course = await CourseDAO.create(
+    course = await course_service.create_course(
         db,
         title=body.title,
         code=body.code,
@@ -212,10 +243,10 @@ async def enroll(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Enroll current user in course."""
-    course = await CourseDAO.get_by_id(db, course_id)
+    course = await course_service.get_course(db, course_id)
     if not course:
         raise NotFoundError("Course not found.", details=None)
-    existing = await EnrollmentDAO.get(db, user.id, course_id)
+    existing = await course_service.get_enrollment(db, user.id, course_id)
     if existing:
         return EnrollmentResponse(
             id=str(existing.id),
@@ -223,7 +254,7 @@ async def enroll(
             progressPercent=existing.progress_percent,
             lastAccessedAt=existing.last_accessed_at.isoformat() if existing.last_accessed_at else None,
         )
-    enrollment = await EnrollmentDAO.create(db, user.id, course_id)
+    enrollment = await course_service.enroll(db, user.id, course_id)
     await db.commit()
     return EnrollmentResponse(
         id=str(enrollment.id),
@@ -241,10 +272,9 @@ async def list_assignments(
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
     """List assignments for a course (paginated)."""
-    assignments = await AssignmentDAO.list_by_course(
+    assignments, total = await course_service.list_assignments(
         db, course_id, limit=pagination.limit, offset=pagination.offset
     )
-    total = await AssignmentDAO.count_by_course(db, course_id)
     return PaginatedResponse(
         items=[_assignment_to_response(a) for a in assignments],
         total=total,
@@ -263,10 +293,10 @@ async def create_assignment(
     """Create assignment (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    course = await CourseDAO.get_by_id(db, course_id)
+    course = await course_service.get_course(db, course_id)
     if not course:
         raise NotFoundError("Course not found.", details=None)
-    a = await AssignmentDAO.create(
+    a = await course_service.create_assignment(
         db,
         course_id=course_id,
         title=body.title,
@@ -276,16 +306,6 @@ async def create_assignment(
         topic=body.topic,
         attachments=body.attachments,
     )
-    enrollments = await EnrollmentDAO.list_by_course(db, course_id, limit=10_000, offset=0)
-    for e in enrollments:
-        await NotificationDAO.create(
-            db,
-            user_id=e.user_id,
-            type="assignment",
-            title="New assignment",
-            body=f"{a.title} (due {a.due_date})",
-            link=f"/courses/{course_id}/assignments/{a.id}",
-        )
     await db.commit()
     return _assignment_to_response(a)
 
@@ -301,10 +321,10 @@ async def update_assignment(
     """Update assignment (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    assignment = await AssignmentDAO.get_by_id(db, assignment_id)
+    assignment = await course_service.get_assignment(db, assignment_id)
     if not assignment or assignment.course_id != course_id:
         raise NotFoundError("Assignment not found.", details=None)
-    updated = await AssignmentDAO.update(
+    updated = await course_service.update_assignment(
         db,
         assignment_id,
         title=body.title,
@@ -328,10 +348,10 @@ async def delete_assignment(
     """Delete assignment (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    assignment = await AssignmentDAO.get_by_id(db, assignment_id)
+    assignment = await course_service.get_assignment(db, assignment_id)
     if not assignment or assignment.course_id != course_id:
         raise NotFoundError("Assignment not found.", details=None)
-    await AssignmentDAO.delete(db, assignment_id)
+    await course_service.delete_assignment(db, assignment_id)
     await db.commit()
 
 
@@ -344,10 +364,10 @@ async def submit_assignment(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Submit assignment for current user."""
-    assignment = await AssignmentDAO.get_by_id(db, assignment_id)
+    assignment = await course_service.get_assignment(db, assignment_id)
     if not assignment or assignment.course_id != course_id:
         raise NotFoundError("Assignment not found.", details=None)
-    sub = await AssignmentSubmissionDAO.create_or_update(
+    sub = await course_service.submit_assignment(
         db,
         user.id,
         assignment_id,
@@ -366,10 +386,9 @@ async def list_materials(
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
     """List materials for a course (paginated)."""
-    materials = await MaterialDAO.list_by_course(
+    materials, total = await course_service.list_materials(
         db, course_id, limit=pagination.limit, offset=pagination.offset
     )
-    total = await MaterialDAO.count_by_course(db, course_id)
     return PaginatedResponse(
         items=[_material_to_response(m) for m in materials],
         total=total,
@@ -388,10 +407,10 @@ async def create_material(
     """Create material (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    course = await CourseDAO.get_by_id(db, course_id)
+    course = await course_service.get_course(db, course_id)
     if not course:
         raise NotFoundError("Course not found.", details=None)
-    m = await MaterialDAO.create(
+    m = await course_service.create_material(
         db,
         course_id=course_id,
         title=body.title,
@@ -415,10 +434,10 @@ async def update_material(
     """Update material (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    material = await MaterialDAO.get_by_id(db, material_id)
+    material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
-    updated = await MaterialDAO.update(
+    updated = await course_service.update_material(
         db,
         material_id,
         title=body.title,
@@ -441,10 +460,10 @@ async def delete_material(
     """Delete material (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    material = await MaterialDAO.get_by_id(db, material_id)
+    material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
-    await MaterialDAO.delete(db, material_id)
+    await course_service.delete_material(db, material_id)
     await db.commit()
 
 
@@ -456,10 +475,9 @@ async def list_stream(
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
     """List stream/announcements for a course (paginated)."""
-    items = await StreamItemDAO.list_by_course(
+    items, total = await course_service.list_stream_items(
         db, course_id, limit=pagination.limit, offset=pagination.offset
     )
-    total = await StreamItemDAO.count_by_course(db, course_id)
     return PaginatedResponse(
         items=[_stream_to_response(s) for s in items],
         total=total,
@@ -478,10 +496,10 @@ async def create_stream_item(
     """Create announcement (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    course = await CourseDAO.get_by_id(db, course_id)
+    course = await course_service.get_course(db, course_id)
     if not course:
         raise NotFoundError("Course not found.", details=None)
-    s = await StreamItemDAO.create(
+    s = await course_service.create_stream_item(
         db,
         course_id=course_id,
         description=body.description,
@@ -504,15 +522,11 @@ async def update_stream_item(
     """Update stream item (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    item = await StreamItemDAO.get_by_id(db, item_id)
+    item = await course_service.get_stream_item(db, item_id)
     if not item or item.course_id != course_id:
         raise NotFoundError("Stream item not found.", details=None)
-    updated = await StreamItemDAO.update(
-        db,
-        item_id,
-        title=body.title,
-        description=body.description,
-        type=body.type,
+    updated = await course_service.update_stream_item(
+        db, item_id, title=body.title, description=body.description, type=body.type
     )
     await db.commit()
     return _stream_to_response(updated)
@@ -528,8 +542,38 @@ async def delete_stream_item(
     """Delete stream item (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    item = await StreamItemDAO.get_by_id(db, item_id)
+    item = await course_service.get_stream_item(db, item_id)
     if not item or item.course_id != course_id:
         raise NotFoundError("Stream item not found.", details=None)
-    await StreamItemDAO.delete(db, item_id)
+    await course_service.delete_stream_item(db, item_id)
     await db.commit()
+
+
+# ----- File upload (assignment attachments) -----
+def _write_upload_sync(dest: Path, content: bytes) -> None:
+    dest.write_bytes(content)
+
+
+@router.post("/upload", response_model=dict)
+async def upload_file(
+    file: Annotated[UploadFile, File()],
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Upload a file; returns { url: "/uploads/..." } for assignment attachments."""
+    if not file.filename:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"code": "INVALID", "message": "No filename"}},
+        )
+    content = await file.read()
+    if len(content) > _MAX_UPLOAD_MB * 1024 * 1024:
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"code": "INVALID", "message": f"File too large (max {_MAX_UPLOAD_MB}MB)"}},
+        )
+    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    ext = Path(file.filename).suffix or ""
+    safe_name = f"{uuid.uuid4().hex}{ext}"
+    dest = _UPLOAD_DIR / safe_name
+    await run_in_threadpool(_write_upload_sync, dest, content)
+    return {"url": f"/uploads/{safe_name}"}

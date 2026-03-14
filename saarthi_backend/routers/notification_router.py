@@ -5,11 +5,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.dao import NotificationDAO
 from saarthi_backend.deps import get_current_user, get_db, get_pagination
 from saarthi_backend.model import User
 from saarthi_backend.schema.notification_schemas import NotificationResponse
-from saarthi_backend.schema.pagination_schemas import PaginatedResponse, PaginationParams
+from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationParams
+from saarthi_backend.service import notification_service
 from saarthi_backend.utils.exceptions import NotFoundError
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -35,14 +35,9 @@ async def list_notifications(
     unread_only: bool = False,
 ):
     """List current user's notifications (paginated)."""
-    notifications = await NotificationDAO.list_by_user(
-        db,
-        user.id,
-        unread_only=unread_only,
-        limit=pagination.limit,
-        offset=pagination.offset,
+    notifications, total = await notification_service.list_notifications(
+        db, user.id, unread_only=unread_only, limit=pagination.limit, offset=pagination.offset
     )
-    total = await NotificationDAO.count_by_user(db, user.id, unread_only=unread_only)
     return PaginatedResponse(
         items=[_notif_to_response(n) for n in notifications],
         total=total,
@@ -58,7 +53,7 @@ async def mark_read(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Mark notification as read."""
-    ok = await NotificationDAO.mark_read(db, notification_id, user.id)
+    ok = await notification_service.mark_read(db, notification_id, user.id)
     if not ok:
         raise NotFoundError("Notification not found.", details=None)
     await db.commit()

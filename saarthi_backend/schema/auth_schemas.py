@@ -43,9 +43,10 @@ class UserResponse(BaseModel):
 
 
 class AuthResponse(BaseModel):
-    """Auth response: access_token, refresh_token, token, user."""
+    """Auth response: access_token, refresh_token, token, user. remember_me for cookie duration."""
 
     access_token: str
     refresh_token: str
     token: str
     user: UserResponse
+    remember_me: bool = True  # Used by router to set cookie expiry (short vs long session)

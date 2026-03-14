@@ -1,4 +1,4 @@
-"""FastAPI dependencies: DB session, AI client, current user, pagination."""
+"""FastAPI dependencies: DB session, current user, pagination."""
 
 from collections.abc import AsyncGenerator
 from typing import Annotated
@@ -6,18 +6,12 @@ from typing import Annotated
 from fastapi import Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.client import AIClient
-from saarthi_backend.schema.pagination_schemas import MAX_PAGE_SIZE, PaginationParams
+from saarthi_backend.schema.common_schemas import MAX_PAGE_SIZE, PaginationParams
 from saarthi_backend.dao import UserDAO
 from saarthi_backend.model import User
 from saarthi_backend.utils.config import get_settings
 from saarthi_backend.utils.exceptions import ValidationError
 from saarthi_backend.utils.jwt_utils import decode_token
-
-
-def get_ai_client(request: Request) -> AIClient:
-    """Return AI client from app state."""
-    return request.app.state.ai_client
 
 
 def get_pagination(

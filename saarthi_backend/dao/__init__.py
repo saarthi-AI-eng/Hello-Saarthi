@@ -1,6 +1,5 @@
 # DAO package
-from .context_dao import ContextDAO
-from .refresh_token_dao import RefreshTokenDAO
+from .auth_dao import RefreshTokenDAO
 from .user_dao import UserDAO
 from .chat_dao import ConversationDAO, ChatMessageDAO
 from .course_dao import (
@@ -17,7 +16,6 @@ from .note_dao import NoteDAO
 from .notification_dao import NotificationDAO
 
 __all__ = [
-    "ContextDAO",
     "ConversationDAO",
     "ChatMessageDAO",
     "UserDAO",

@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     cookie_same_site: str = "lax"
     cookie_domain: str | None = None  # e.g. ".saarthi.ai" in prod
 
+    # CORS: allow_credentials=True requires explicit origins (no "*")
+    # Comma-separated list; include Vite (5173) and CRA (3000) for local dev
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
