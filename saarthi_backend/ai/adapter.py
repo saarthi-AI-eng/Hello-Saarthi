@@ -15,13 +15,15 @@ from src.utils.state import AgentState  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+# Compile the LangGraph workflow once at module load and reuse (topology is static).
+_WORKFLOW = create_graph()
+
 # Max time for a single AI request (seconds)
 AI_REQUEST_TIMEOUT = 120
 
 
 def _invoke_graph_sync(query: str, messages: list[dict], mind_mode: bool = False) -> dict:
     """Run the compiled graph synchronously. Called from thread pool."""
-    workflow = create_graph()
     state: AgentState = {
         "query": query,
         "messages": messages,
@@ -31,7 +33,7 @@ def _invoke_graph_sync(query: str, messages: list[dict], mind_mode: bool = False
         "mind_mode": mind_mode,
         "next_step": "",
     }
-    final_state = workflow.invoke(state)
+    final_state = _WORKFLOW.invoke(state)
     return dict(final_state)
 
 
@@ -60,7 +62,7 @@ async def run_chat(
     conversation_history: list of {"role": "user"|"assistant", "content": str}.
     """
     messages = conversation_history  # graph expects list of dicts
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         final_state = await asyncio.wait_for(
             loop.run_in_executor(
