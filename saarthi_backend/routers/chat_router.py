@@ -46,9 +46,11 @@ def _message_to_item(m) -> ChatMessageResponseItem:
 # --- Legacy: stateless message (no conversation id) ---
 @router.post("/message", response_model=ChatMessageResponse)
 async def chat_message(body: ChatMessageRequest):
-    """Stateless chat (e.g. AIChatbot). No persistence. Uses in-process src/ AI graph."""
+    """Stateless chat (e.g. AIChatbot, material viewer). No persistence. Uses in-process src/ AI graph."""
     history = [{"role": m.role, "content": m.content} for m in body.conversationHistory]
-    answer = await chat_service.stateless_message(body.message, history)
+    answer = await chat_service.stateless_message(
+        body.message, history, context_material_title=body.contextMaterialTitle
+    )
     return ChatMessageResponse(response=answer)
 
 
@@ -138,7 +140,9 @@ async def send_message(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Append user message, call AI (src/ graph), append assistant reply. Optionally set title from first message."""
-    result = await chat_service.send_message(db, conversation_id, user.id, body.message)
+    result = await chat_service.send_message(
+        db, conversation_id, user.id, body.message, context_material_title=body.contextMaterialTitle
+    )
     if not result:
         raise NotFoundError("Conversation not found.", details=None)
     user_msg, assistant_msg = result

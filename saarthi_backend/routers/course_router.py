@@ -1,5 +1,6 @@
 """Courses, enrollments, assignments, materials, stream, file upload (under /api/courses)."""
 
+import logging
 import uuid
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from saarthi_backend.deps import get_current_user, get_db, get_pagination
@@ -36,6 +37,7 @@ from saarthi_backend.service import course_service
 from saarthi_backend.utils.exceptions import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/courses", tags=["courses"])
+logger = logging.getLogger(__name__)
 
 # File upload for assignment attachments (no separate upload router; one router per DAO)
 _UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
@@ -69,13 +71,18 @@ def _assignment_to_response(a):
 
 
 def _material_to_response(m):
+    # For local /uploads files, expose the authenticated file route so access control isn't bypassed.
+    if _uploads_filename_from_url(m.url or ""):
+        download_url = f"/courses/{m.course_id}/materials/{m.id}/file"
+    else:
+        download_url = m.url or ""
     return MaterialResponse(
         id=str(m.id),
         courseId=str(m.course_id),
         title=m.title,
         description=m.description,
         type=m.type,
-        url=m.url,
+        url=download_url,
         topic=m.topic,
         createdAt=m.created_at.isoformat() if m.created_at else "",
     )
@@ -112,7 +119,17 @@ async def search(
             for c in courses
         ],
         materials=[
-            SearchItem(type="material", id=str(m.id), title=m.title, subtitle=m.type or "", link=m.url or "")
+            SearchItem(
+                type="material",
+                id=str(m.id),
+                title=m.title,
+                subtitle=m.type or "",
+                link=(
+                    f"/courses/{m.course_id}/materials/{m.id}/file"
+                    if _uploads_filename_from_url(m.url or "")
+                    else (m.url or "")
+                ),
+            )
             for m in materials
         ],
         videos=[
@@ -450,6 +467,19 @@ async def update_material(
     return _material_to_response(updated)
 
 
+def _uploads_filename_from_url(url: str) -> str | None:
+    """Extract uploads filename from material url (e.g. /uploads/abc.pdf or http://host/uploads/abc.pdf)."""
+    if not url or "/uploads/" not in url:
+        return None
+    parts = url.split("/uploads/", 1)
+    if len(parts) != 2 or not parts[1].strip():
+        return None
+    name = parts[1].split("?")[0].strip()
+    if not name or ".." in name:
+        return None
+    return name
+
+
 @router.delete("/{course_id}/materials/{material_id}", status_code=204)
 async def delete_material(
     course_id: int,
@@ -457,14 +487,56 @@ async def delete_material(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Delete material (admin/teacher)."""
+    """Delete material (admin/teacher). Removes DB record and file from uploads if stored locally."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
     material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
+    filename = _uploads_filename_from_url(material.url or "")
+    if filename:
+        file_path = _UPLOAD_DIR / filename
+        if file_path.is_file():
+            try:
+                await run_in_threadpool(file_path.unlink)
+            except OSError as exc:
+                logger.warning(
+                    "Failed to delete material file '%s' at '%s': %s",
+                    filename,
+                    file_path,
+                    exc,
+                )
     await course_service.delete_material(db, material_id)
     await db.commit()
+
+
+@router.get("/{course_id}/materials/{material_id}/file")
+async def get_material_file(
+    course_id: int,
+    material_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Stream material file (PDF etc.). Requires enrollment in course or teacher/admin."""
+    material = await course_service.get_material(db, material_id)
+    if not material or material.course_id != course_id:
+        raise NotFoundError("Material not found.", details=None)
+    if user.role not in ("admin", "teacher"):
+        enrollment = await course_service.get_enrollment(db, user.id, course_id)
+        if not enrollment:
+            raise ValidationError("You must be enrolled in this course to view materials.", details=None)
+    filename = _uploads_filename_from_url(material.url or "")
+    if filename:
+        file_path = _UPLOAD_DIR / filename
+        if file_path.is_file():
+            media_type = "application/pdf" if filename.lower().endswith(".pdf") else None
+            return FileResponse(
+                path=str(file_path),
+                filename=filename,
+                media_type=media_type,
+                content_disposition="inline",
+            )
+    raise NotFoundError("File not found.", details=None)
 
 
 # ----- Stream -----

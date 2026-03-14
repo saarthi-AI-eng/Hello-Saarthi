@@ -11,10 +11,11 @@ class ChatMessageItem(BaseModel):
 
 
 class ChatMessageRequest(BaseModel):
-    """POST /api/chat/message."""
+    """POST /api/chat/message (stateless)."""
 
     message: str = Field(..., min_length=1)
     conversationHistory: list[ChatMessageItem] = Field(default_factory=list)
+    contextMaterialTitle: str | None = Field(None, description="Document title when user is viewing a material; AI answers in that context.")
 
 
 class ChatMessageResponse(BaseModel):
@@ -58,6 +59,7 @@ class UpdateConversationRequest(BaseModel):
 
 class SendMessageRequest(BaseModel):
     message: str = Field(..., min_length=1)
+    contextMaterialTitle: str | None = Field(None, description="Document title when asking in context of a material.")
 
 
 class SendMessageResponse(BaseModel):
