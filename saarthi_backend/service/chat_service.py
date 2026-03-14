@@ -63,8 +63,8 @@ async def send_message(
     existing = await ChatMessageDAO.list_by_conversation(db, conversation_id)
     user_msg = await ChatMessageDAO.create(db, conversation_id, "user", message)
     history = [{"role": m.role, "content": m.content} for m in existing]
-    history.append({"role": "user", "content": message})
     prompt_for_ai = _apply_document_context(message, context_material_title)
+    history.append({"role": "user", "content": prompt_for_ai})
     assistant_content = await run_chat(prompt_for_ai, history, mind_mode=False)
     assistant_msg = await ChatMessageDAO.create(db, conversation_id, "assistant", assistant_content)
     if len(existing) == 0:
@@ -84,6 +84,6 @@ async def stateless_message(
 ) -> str:
     """Stateless chat (no persistence). Returns assistant answer text."""
     history = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in conversation_history]
-    history.append({"role": "user", "content": message})
     prompt_for_ai = _apply_document_context(message, context_material_title)
+    history.append({"role": "user", "content": prompt_for_ai})
     return await run_chat(prompt_for_ai, history, mind_mode=mind_mode)

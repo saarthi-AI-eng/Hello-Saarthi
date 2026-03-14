@@ -1,5 +1,6 @@
 """Courses, enrollments, assignments, materials, stream, file upload (under /api/courses)."""
 
+import logging
 import uuid
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from saarthi_backend.service import course_service
 from saarthi_backend.utils.exceptions import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/courses", tags=["courses"])
+logger = logging.getLogger(__name__)
 
 # File upload for assignment attachments (no separate upload router; one router per DAO)
 _UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
@@ -69,13 +71,18 @@ def _assignment_to_response(a):
 
 
 def _material_to_response(m):
+    # For local /uploads files, expose the authenticated file route so access control isn't bypassed.
+    if _uploads_filename_from_url(m.url or ""):
+        download_url = f"/courses/{m.course_id}/materials/{m.id}/file"
+    else:
+        download_url = m.url or ""
     return MaterialResponse(
         id=str(m.id),
         courseId=str(m.course_id),
         title=m.title,
         description=m.description,
         type=m.type,
-        url=m.url,
+        url=download_url,
         topic=m.topic,
         createdAt=m.created_at.isoformat() if m.created_at else "",
     )
@@ -112,7 +119,17 @@ async def search(
             for c in courses
         ],
         materials=[
-            SearchItem(type="material", id=str(m.id), title=m.title, subtitle=m.type or "", link=m.url or "")
+            SearchItem(
+                type="material",
+                id=str(m.id),
+                title=m.title,
+                subtitle=m.type or "",
+                link=(
+                    f"/courses/{m.course_id}/materials/{m.id}/file"
+                    if _uploads_filename_from_url(m.url or "")
+                    else (m.url or "")
+                ),
+            )
             for m in materials
         ],
         videos=[
@@ -480,7 +497,15 @@ async def delete_material(
     if filename:
         file_path = _UPLOAD_DIR / filename
         if file_path.is_file():
-            await run_in_threadpool(file_path.unlink)
+            try:
+                await run_in_threadpool(file_path.unlink)
+            except OSError as exc:
+                logger.warning(
+                    "Failed to delete material file '%s' at '%s': %s",
+                    filename,
+                    file_path,
+                    exc,
+                )
     await course_service.delete_material(db, material_id)
     await db.commit()
 
@@ -509,7 +534,7 @@ async def get_material_file(
                 path=str(file_path),
                 filename=filename,
                 media_type=media_type,
-                headers={"Content-Disposition": "inline"},
+                content_disposition="inline",
             )
     raise NotFoundError("File not found.", details=None)
 
