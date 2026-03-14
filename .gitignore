@@ -26,3 +26,12 @@ uploads/
 
 # Logs
 *.log
+
+# Repo-specific (from main)
+Dataset/
+assets/
+docs/
+knowledge_base/
+saarthi_graph.png
+tests/
+app.py
