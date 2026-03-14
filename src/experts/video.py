@@ -1,0 +1,14 @@
+from src.schemas.models import ExpertResponse, ExpertName
+from src.experts.base import run_expert
+from src.utils.state import AgentState
+
+def run_video_agent(query: str) -> ExpertResponse:
+    """
+    Executes the video agent using the same RAG pattern as books/notes agents.
+    """
+    return run_expert("video_agent", query, mode="planning")
+
+def video_agent_node(state: AgentState):
+    query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
+    res = run_video_agent(query)
+    return {"results": {"video_agent": res}}
