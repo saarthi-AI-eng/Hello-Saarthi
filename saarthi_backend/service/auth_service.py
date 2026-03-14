@@ -48,6 +48,7 @@ async def signin(db: AsyncSession, email: str, password: str, remember_me: bool 
         refresh_token=refresh,
         token=access,
         user=_user_to_response(user),
+        remember_me=remember_me,
     )
 
 
@@ -86,6 +87,7 @@ async def signup(
         refresh_token=refresh,
         token=access,
         user=_user_to_response(user),
+        remember_me=True,
     )
 
 
@@ -100,11 +102,14 @@ async def refresh(db: AsyncSession, refresh_token: str) -> AuthResponse:
     user = await UserDAO.get_by_id(db, row.user_id)
     if not user:
         raise ValidationError("User not found.", details=None)
+    # Preserve original session duration (don't upgrade short-lived to long-lived)
+    original_delta = row.expires_at - row.created_at
+    original_days = max(1, original_delta.days)
+    remember_me = original_days > 1
     access = create_access_token(str(user.id))
-    new_refresh = create_refresh_token(str(user.id))
+    new_refresh = create_refresh_token(str(user.id), expire_days=original_days)
     await RefreshTokenDAO.revoke_by_hash(db, token_hash)
-    settings = get_settings()
-    expires = datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_expire_days)
+    expires = datetime.now(timezone.utc) + timedelta(days=original_days)
     await RefreshTokenDAO.create(db, user.id, _hash_refresh(new_refresh), expires)
     await db.commit()
     return AuthResponse(
@@ -112,4 +117,5 @@ async def refresh(db: AsyncSession, refresh_token: str) -> AuthResponse:
         refresh_token=new_refresh,
         token=access,
         user=_user_to_response(user),
+        remember_me=remember_me,
     )

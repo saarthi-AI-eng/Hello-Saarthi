@@ -5,10 +5,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.dao import VideoDAO, VideoProgressDAO, VideoNoteDAO
 from saarthi_backend.deps import get_current_user, get_db, get_pagination
 from saarthi_backend.model import User
-from saarthi_backend.schema.pagination_schemas import PaginatedResponse, PaginationParams
+from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationParams
 from saarthi_backend.schema.video_schemas import (
     VideoCreate,
     VideoNoteCreate,
@@ -17,6 +16,7 @@ from saarthi_backend.schema.video_schemas import (
     VideoProgressUpdate,
     VideoResponse,
 )
+from saarthi_backend.service import video_service
 from saarthi_backend.utils.exceptions import NotFoundError, ValidationError
 
 router = APIRouter(prefix="/videos", tags=["videos"])
@@ -62,13 +62,9 @@ async def list_videos(
     course_id: int | None = None,
 ):
     """List videos, optionally filtered by course_id (paginated)."""
-    videos = await VideoDAO.list_all(
-        db,
-        course_id=course_id,
-        limit=pagination.limit,
-        offset=pagination.offset,
+    videos, total = await video_service.list_videos(
+        db, course_id=course_id, limit=pagination.limit, offset=pagination.offset
     )
-    total = await VideoDAO.count_all(db, course_id=course_id)
     return PaginatedResponse(
         items=[_video_to_response(v) for v in videos],
         total=total,
@@ -86,7 +82,7 @@ async def delete_video(
     """Delete video (admin/teacher). Must be declared before GET for same path."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    deleted = await VideoDAO.delete(db, video_id)
+    deleted = await video_service.delete_video(db, video_id)
     if not deleted:
         raise NotFoundError("Video not found.", details=None)
     await db.commit()
@@ -98,7 +94,7 @@ async def get_video(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get video by id (includes playback URL)."""
-    video = await VideoDAO.get_by_id(db, video_id)
+    video = await video_service.get_video(db, video_id)
     if not video:
         raise NotFoundError("Video not found.", details=None)
     return _video_to_response(video)
@@ -113,7 +109,7 @@ async def create_video(
     """Create video (admin/teacher)."""
     if user.role not in ("admin", "teacher"):
         raise ValidationError("Forbidden.", details=None)
-    v = await VideoDAO.create(
+    v = await video_service.create_video(
         db,
         title=body.title,
         url=body.url,
@@ -137,10 +133,9 @@ async def get_progress(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get current user's watch progress for video."""
-    video = await VideoDAO.get_by_id(db, video_id)
-    if not video:
+    if not await video_service.get_video(db, video_id):
         raise NotFoundError("Video not found.", details=None)
-    prog = await VideoProgressDAO.get(db, user.id, video_id)
+    prog = await video_service.get_progress(db, user.id, video_id)
     if not prog:
         return VideoProgressResponse(positionSeconds=0, completed=False, updatedAt="")
     return _progress_to_response(prog)
@@ -154,10 +149,9 @@ async def update_progress(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Upsert watch progress."""
-    video = await VideoDAO.get_by_id(db, video_id)
-    if not video:
+    if not await video_service.get_video(db, video_id):
         raise NotFoundError("Video not found.", details=None)
-    prog = await VideoProgressDAO.upsert(
+    prog = await video_service.upsert_progress(
         db,
         user.id,
         video_id,
@@ -176,10 +170,9 @@ async def list_notes(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """List current user's notes for video."""
-    video = await VideoDAO.get_by_id(db, video_id)
-    if not video:
+    if not await video_service.get_video(db, video_id):
         raise NotFoundError("Video not found.", details=None)
-    notes = await VideoNoteDAO.list_by_video_user(db, user.id, video_id)
+    notes = await video_service.list_video_notes(db, user.id, video_id)
     return [_note_to_response(n) for n in notes]
 
 
@@ -191,15 +184,10 @@ async def create_note(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Add note at timestamp."""
-    video = await VideoDAO.get_by_id(db, video_id)
-    if not video:
+    if not await video_service.get_video(db, video_id):
         raise NotFoundError("Video not found.", details=None)
-    n = await VideoNoteDAO.create(
-        db,
-        user.id,
-        video_id,
-        time_seconds=body.timeSeconds,
-        text=body.text,
+    n = await video_service.create_video_note(
+        db, user.id, video_id, time_seconds=body.timeSeconds, text=body.text
     )
     await db.commit()
     return _note_to_response(n)
@@ -213,7 +201,7 @@ async def delete_note(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Delete own note."""
-    deleted = await VideoNoteDAO.delete(db, note_id, user.id)
+    deleted = await video_service.delete_video_note(db, note_id, user.id)
     if deleted:
         await db.commit()
     return None

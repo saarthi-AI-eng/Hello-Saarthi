@@ -13,3 +13,13 @@ PyJWT>=2.8.0
 bcrypt>=4.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
+
+# AI (in-process src/ LangGraph)
+langgraph>=0.2.0
+langchain-openai>=0.2.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+docling>=2.0.0
+numexpr>=2.8.0
+openai>=1.0.0

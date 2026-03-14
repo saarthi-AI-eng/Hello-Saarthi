@@ -5,11 +5,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.dao import NoteDAO
 from saarthi_backend.deps import get_current_user, get_db, get_pagination
 from saarthi_backend.model import User
 from saarthi_backend.schema.note_schemas import NoteCreate, NoteResponse, NoteUpdate
-from saarthi_backend.schema.pagination_schemas import PaginatedResponse, PaginationParams
+from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationParams
+from saarthi_backend.service import note_service
 from saarthi_backend.utils.exceptions import NotFoundError
 
 router = APIRouter(prefix="/notes", tags=["notes"])
@@ -35,14 +35,9 @@ async def list_notes(
     course_id: int | None = None,
 ):
     """List current user's notes, optionally by course (paginated)."""
-    notes = await NoteDAO.list_by_user(
-        db,
-        user.id,
-        course_id=course_id,
-        limit=pagination.limit,
-        offset=pagination.offset,
+    notes, total = await note_service.list_notes(
+        db, user.id, course_id=course_id, limit=pagination.limit, offset=pagination.offset
     )
-    total = await NoteDAO.count_by_user(db, user.id, course_id=course_id)
     return PaginatedResponse(
         items=[_note_to_response(n) for n in notes],
         total=total,
@@ -58,7 +53,7 @@ async def create_note(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Create note."""
-    n = await NoteDAO.create(
+    n = await note_service.create_note(
         db,
         user.id,
         title=body.title,
@@ -77,8 +72,8 @@ async def get_note(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Get note by id (own only)."""
-    n = await NoteDAO.get_by_id(db, note_id)
-    if not n or n.user_id != user.id:
+    n = await note_service.get_note(db, note_id, user_id=user.id)
+    if not n:
         raise NotFoundError("Note not found.", details=None)
     return _note_to_response(n)
 
@@ -91,7 +86,7 @@ async def update_note(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Update note (own only)."""
-    n = await NoteDAO.update(db, note_id, user.id, title=body.title, content=body.content)
+    n = await note_service.update_note(db, note_id, user.id, title=body.title, content=body.content)
     if not n:
         raise NotFoundError("Note not found.", details=None)
     await db.commit()
@@ -105,7 +100,7 @@ async def delete_note(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Delete note (own only)."""
-    deleted = await NoteDAO.delete(db, note_id, user.id)
+    deleted = await note_service.delete_note(db, note_id, user.id)
     if deleted:
         await db.commit()
     return None

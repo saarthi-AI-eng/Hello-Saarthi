@@ -143,3 +143,23 @@ class CoursePersonResponse(BaseModel):
     userId: str
     fullName: str
     progressPercent: float
+
+
+# ----- Search (no dedicated search_schemas; under course domain) -----
+class SearchItem(BaseModel):
+    type: str
+    id: str
+    title: str
+    subtitle: Optional[str] = None
+    link: str
+
+
+class SearchResponse(BaseModel):
+    limit: int
+    offset: int
+    courses: list[SearchItem] = []
+    materials: list[SearchItem] = []
+    videos: list[SearchItem] = []
+    totalCourses: int = 0
+    totalMaterials: int = 0
+    totalVideos: int = 0

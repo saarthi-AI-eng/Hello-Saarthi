@@ -35,3 +35,30 @@ knowledge_base/
 saarthi_graph.png
 tests/
 app.py
+
+# Generated / runtime
+kb_status.json
+download_progress.json
+
+# Archives and large data (do not commit)
+*.zip
+youtube_videos.csv
+youtube_videos.json
+youtube_videos.txt
+transcript_comparison_output/
+transcripts/
+vector_data/
+vector_data_structured/
+video_chunks_metadata/
+
+# Local / one-off scripts and notes (optional)
+_test_same/
+_test_structured_output/
+_test_transcript/
+1st_outline.txt
+approach_a.txt
+karthik_approach_*.txt
+clarification_*.txt
+literature_review.txt
+DIFF_SUMMARY.md
+VideoDownloadPackage/

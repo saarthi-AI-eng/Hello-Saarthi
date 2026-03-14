@@ -1,4 +1,4 @@
-"""Refresh token DAO."""
+"""Auth DAO: refresh token storage and lookup."""
 
 from datetime import datetime, timezone
 

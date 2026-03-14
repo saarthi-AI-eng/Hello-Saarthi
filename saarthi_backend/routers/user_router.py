@@ -5,13 +5,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.dao import EnrollmentDAO, UserDAO
-from saarthi_backend.dao.course_dao import count_pending_assignments_for_user
-from saarthi_backend.dao.quiz_dao import QuizAttemptDAO
 from saarthi_backend.deps import get_current_user, get_db
 from saarthi_backend.model import User
-from saarthi_backend.schema.progress_schemas import ProgressResponse
-from saarthi_backend.schema.user_schemas import UserProfileResponse, UserProfileUpdate
+from saarthi_backend.schema.user_schemas import ProgressResponse, UserProfileResponse, UserProfileUpdate
+from saarthi_backend.service import user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -35,16 +32,9 @@ async def get_my_progress(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Dashboard stats: courses enrolled, pending assignments, avg quiz score, study time, streak."""
-    enrollments = await EnrollmentDAO.list_by_user(db, user.id)
-    pending = await count_pending_assignments_for_user(db, user.id)
-    attempts = await QuizAttemptDAO.list_by_user(db, user.id, submitted_only=True)
-    avg_score = 0.0
-    if attempts:
-        total = sum(a.score for a in attempts if a.score is not None)
-        count = sum(1 for a in attempts if a.score is not None)
-        avg_score = round(total / count, 1) if count else 0.0
+    courses_enrolled, pending, avg_score = await user_service.get_progress(db, user.id)
     return ProgressResponse(
-        coursesEnrolled=len(enrollments),
+        coursesEnrolled=courses_enrolled,
         pendingAssignments=pending,
         avgQuizScorePercent=avg_score,
         studyTimeHours=0.0,
@@ -68,7 +58,7 @@ async def update_my_profile(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Update current user profile."""
-    updated = await UserDAO.update_profile(
+    updated = await user_service.update_profile(
         db,
         user.id,
         full_name=body.fullName,

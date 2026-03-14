@@ -75,7 +75,7 @@ async def refresh(
     if not refresh_token:
         raise ValidationError("Refresh token required (cookie or body).", details=None)
     result = await auth_service.refresh(db, refresh_token)
-    set_auth_cookies(response, result.access_token, result.refresh_token, remember_me=True)
+    set_auth_cookies(response, result.access_token, result.refresh_token, remember_me=result.remember_me)
     return result
 
 
