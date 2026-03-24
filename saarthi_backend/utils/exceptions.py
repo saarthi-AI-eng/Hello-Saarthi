@@ -27,11 +27,25 @@ class ValidationError(SaarthiBackendError):
         super().__init__("VALIDATION_ERROR", message, details, 400)
 
 
+class UnauthorizedError(SaarthiBackendError):
+    """Not authenticated (401)."""
+
+    def __init__(self, message: str = "Not authenticated.", details: Optional[dict] = None):
+        super().__init__("UNAUTHORIZED", message, details, 401)
+
+
 class NotFoundError(SaarthiBackendError):
     """Resource not found (404)."""
 
     def __init__(self, message: str = "Resource not found.", details: Optional[dict] = None):
         super().__init__("NOT_FOUND", message, details, 404)
+
+
+class ForbiddenError(SaarthiBackendError):
+    """Forbidden (403)."""
+
+    def __init__(self, message: str = "Forbidden.", details: Optional[dict] = None):
+        super().__init__("FORBIDDEN", message, details, 403)
 
 
 class RetrievalError(SaarthiBackendError):
@@ -48,9 +62,14 @@ class AIServiceError(SaarthiBackendError):
         super().__init__(code, message, details, status_code)
 
 
-def error_response(code: str, message: str, details: Optional[dict[str, Any]] = None) -> dict:
-    """Build error body per contract (04-backend-to-orchestrator-responses)."""
-    return {
+def error_response(
+    code: str,
+    message: str,
+    details: Optional[dict[str, Any]] = None,
+    request_id: Optional[str] = None,
+) -> dict:
+    """Build error body with optional request ID for debugging."""
+    body: dict[str, Any] = {
         "success": False,
         "error": {
             "code": code,
@@ -58,3 +77,6 @@ def error_response(code: str, message: str, details: Optional[dict[str, Any]] = 
             "details": details,
         },
     }
+    if request_id:
+        body["error"]["requestId"] = request_id
+    return body

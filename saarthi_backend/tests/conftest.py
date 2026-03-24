@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from saarthi_backend.main import app
 from saarthi_backend.model import Base
-from saarthi_backend.client import AIClient
 
 
 @pytest.fixture(scope="session")
@@ -44,12 +43,6 @@ async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
     )
     async with session_factory() as session:
         yield session
-
-
-@pytest.fixture
-def mock_ai_client():
-    """Return a mock AI client (override in tests that need it)."""
-    return AIClient(base_url="http://mock-ai.example.com")
 
 
 @pytest.fixture
