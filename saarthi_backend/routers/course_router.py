@@ -75,7 +75,7 @@ def _assignment_to_response(a):
 
 
 def _uploads_filename_from_url(url: str) -> str | None:
-    """Extract uploads filename from material url (e.g. /uploads/abc.pdf or http://host/uploads/abc.pdf)."""
+    """Extract a safe uploads basename from material URL."""
     if not url or "/uploads/" not in url:
         return None
     parts = url.split("/uploads/", 1)
@@ -83,6 +83,10 @@ def _uploads_filename_from_url(url: str) -> str | None:
         return None
     name = parts[1].split("?")[0].strip()
     if not name or ".." in name:
+        return None
+    if name.startswith(("/", "\\")):
+        return None
+    if "/" in name or "\\" in name:
         return None
     return name
 
@@ -511,6 +515,30 @@ async def _stream_file_chunks(path: Path, start: int, end: int):
         offset += len(chunk)
 
 
+def _resolve_upload_path(filename: str) -> Path | None:
+    """Resolve upload path and ensure it stays inside _UPLOAD_DIR."""
+    try:
+        base = _UPLOAD_DIR.resolve()
+        candidate = (base / filename).resolve()
+    except OSError:
+        return None
+    if candidate == base:
+        return None
+    if base not in candidate.parents:
+        return None
+    return candidate
+
+
+def _safe_file_size_sync(path: Path) -> int | None:
+    """Return file size if regular file exists; else None."""
+    try:
+        if not path.is_file():
+            return None
+        return path.stat().st_size
+    except OSError:
+        return None
+
+
 @router.delete("/{course_id}/materials/{material_id}", status_code=204)
 async def delete_material(
     course_id: int,
@@ -520,14 +548,14 @@ async def delete_material(
 ):
     """Delete material (admin/teacher). Removes DB record and file from uploads if stored locally."""
     if user.role not in ("admin", "teacher"):
-        raise ValidationError("Forbidden.", details=None)
+        raise ForbiddenError("Forbidden.", details=None)
     material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
     filename = _uploads_filename_from_url(material.url or "")
     if filename:
-        file_path = _UPLOAD_DIR / filename
-        if file_path.is_file():
+        file_path = _resolve_upload_path(filename)
+        if file_path and await run_in_threadpool(_safe_file_size_sync, file_path) is not None:
             try:
                 await run_in_threadpool(file_path.unlink)
             except OSError as exc:
@@ -556,7 +584,7 @@ async def get_material_file(
     if user.role not in ("admin", "teacher"):
         enrollment = await course_service.get_enrollment(db, user.id, course_id)
         if not enrollment:
-            raise ValidationError("You must be enrolled in this course to view materials.", details=None)
+            raise ForbiddenError("You must be enrolled in this course to view materials.", details=None)
     filename = _uploads_filename_from_url(material.url or "")
     if not filename:
         raise NotFoundError("File not found.", details=None)
@@ -565,11 +593,11 @@ async def get_material_file(
             "File type not allowed for course materials.",
             details={"allowedExtensions": list(_ALLOWED_MATERIAL_EXTENSIONS)},
         )
-    file_path = _UPLOAD_DIR / filename
-    if not file_path.is_file():
+    file_path = _resolve_upload_path(filename)
+    if not file_path:
         raise NotFoundError("File not found.", details=None)
-    file_size = file_path.stat().st_size
-    if file_size == 0:
+    file_size = await run_in_threadpool(_safe_file_size_sync, file_path)
+    if file_size is None or file_size == 0:
         raise NotFoundError("File not found.", details=None)
 
     media_type = "application/pdf" if filename.lower().endswith(".pdf") else "application/octet-stream"
@@ -579,21 +607,43 @@ async def get_material_file(
     start = 0
     end = file_size - 1
     use_range = False
+    invalid_range = False
     if range_header and range_header.strip().lower().startswith("bytes="):
         part = range_header[6:].strip()
         if "-" in part:
             s, e = part.split("-", 1)
             try:
-                start = int(s) if s else 0
-                end = int(e) if e else file_size - 1
+                if not s and e:
+                    # Suffix range: bytes=-N (last N bytes)
+                    suffix_length = int(e)
+                    if suffix_length <= 0:
+                        invalid_range = True
+                    else:
+                        start = max(0, file_size - suffix_length)
+                        end = file_size - 1
+                else:
+                    # Standard range: bytes=start-end or bytes=start-
+                    start = int(s) if s else 0
+                    end = int(e) if e else file_size - 1
+                    if start < 0 or end < 0 or start >= file_size:
+                        invalid_range = True
+                    elif end >= file_size:
+                        end = file_size - 1
             except ValueError:
-                pass
-            if start < 0:
-                start = 0
-            if end >= file_size:
-                end = file_size - 1
-            if start <= end:
+                invalid_range = True
+            if not invalid_range and start <= end:
                 use_range = True
+            elif not invalid_range:
+                invalid_range = True
+        else:
+            invalid_range = True
+
+    if invalid_range:
+        return JSONResponse(
+            status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+            content={"detail": "Requested Range Not Satisfiable"},
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
 
     if use_range:
         content_length = end - start + 1
