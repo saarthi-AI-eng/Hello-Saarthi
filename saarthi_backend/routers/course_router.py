@@ -144,7 +144,17 @@ async def search(
             for c in courses
         ],
         materials=[
-            SearchItem(type="material", id=str(m.id), title=m.title, subtitle=m.type or "", link=m.url or "")
+            SearchItem(
+                type="material",
+                id=str(m.id),
+                title=m.title,
+                subtitle=m.type or "",
+                link=(
+                    f"/courses/{m.course_id}/materials/{m.id}/file"
+                    if _uploads_filename_from_url(m.url or "")
+                    else (m.url or "")
+                ),
+            )
             for m in materials
         ],
         videos=[
