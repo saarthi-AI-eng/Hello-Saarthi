@@ -10,7 +10,7 @@ from saarthi_backend.schema.common_schemas import MAX_PAGE_SIZE, PaginationParam
 from saarthi_backend.dao import UserDAO
 from saarthi_backend.model import User
 from saarthi_backend.utils.config import get_settings
-from saarthi_backend.utils.exceptions import ValidationError
+from saarthi_backend.utils.exceptions import UnauthorizedError, ValidationError
 from saarthi_backend.utils.jwt_utils import decode_token
 
 
@@ -47,16 +47,16 @@ async def get_current_user(
         if len(parts) == 2 and parts[0].lower() == "bearer":
             token = parts[1]
     if not token:
-        raise ValidationError("Not authenticated.", details=None)
+        raise UnauthorizedError("Not authenticated.", details=None)
     payload = decode_token(token)
     if not payload or payload.get("type") != "access":
-        raise ValidationError("Invalid or expired access token.", details=None)
+        raise UnauthorizedError("Invalid or expired access token.", details=None)
     user_id = payload.get("sub")
     if not user_id:
-        raise ValidationError("Invalid token.", details=None)
+        raise UnauthorizedError("Invalid token.", details=None)
     user = await UserDAO.get_by_id(db, int(user_id))
     if not user:
-        raise ValidationError("User not found.", details=None)
+        raise UnauthorizedError("User not found.", details=None)
     return user
 
 

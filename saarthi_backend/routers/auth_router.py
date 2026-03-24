@@ -11,7 +11,7 @@ from saarthi_backend.schema.auth_schemas import AuthResponse, SigninRequest, Sig
 from saarthi_backend.service import auth_service
 from saarthi_backend.utils.config import get_settings
 from saarthi_backend.utils.cookie_utils import set_auth_cookies, clear_auth_cookies
-from saarthi_backend.utils.exceptions import ValidationError
+from saarthi_backend.utils.exceptions import UnauthorizedError, ValidationError
 from saarthi_backend.utils.jwt_utils import decode_token
 from saarthi_backend.dao import UserDAO
 
@@ -89,16 +89,16 @@ async def me(request: Request, db: Annotated[AsyncSession, Depends(get_db)]):
         if len(parts) == 2 and parts[0].lower() == "bearer":
             access_token = parts[1]
     if not access_token:
-        raise ValidationError("Not authenticated.", details=None)
+        raise UnauthorizedError("Not authenticated.", details=None)
     payload = decode_token(access_token)
     if not payload or payload.get("type") != "access":
-        raise ValidationError("Invalid or expired access token.", details=None)
+        raise UnauthorizedError("Invalid or expired access token.", details=None)
     user_id = payload.get("sub")
     if not user_id:
-        raise ValidationError("Invalid token.", details=None)
+        raise UnauthorizedError("Invalid token.", details=None)
     user = await UserDAO.get_by_id(db, int(user_id))
     if not user:
-        raise ValidationError("User not found.", details=None)
+        raise UnauthorizedError("User not found.", details=None)
     return _user_to_response(user)
 
 
