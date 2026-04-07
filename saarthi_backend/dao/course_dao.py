@@ -77,6 +77,15 @@ class CourseDAO:
         await db.refresh(c)
         return c
 
+    @staticmethod
+    async def delete(db: AsyncSession, course_id: int) -> bool:
+        c = await CourseDAO.get_by_id(db, course_id)
+        if c:
+            await db.delete(c)
+            await db.flush()
+            return True
+        return False
+
 
 class EnrollmentDAO:
     @staticmethod

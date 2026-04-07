@@ -281,6 +281,22 @@ async def create_course(
     return _course_to_response(course)
 
 
+@router.delete("/{course_id}", status_code=204)
+async def delete_course(
+    course_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Delete course (admin/teacher). Cascades to related course data."""
+    if user.role not in ("admin", "teacher"):
+        raise ValidationError("Forbidden.", details=None)
+    course = await course_service.get_course(db, course_id)
+    if not course:
+        raise NotFoundError("Course not found.", details=None)
+    await course_service.delete_course(db, course_id)
+    await db.commit()
+
+
 # ----- Enrollments -----
 @router.post("/{course_id}/enroll", response_model=EnrollmentResponse, status_code=status.HTTP_201_CREATED)
 async def enroll(

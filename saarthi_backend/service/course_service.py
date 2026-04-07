@@ -56,6 +56,10 @@ async def create_course(
     )
 
 
+async def delete_course(db: AsyncSession, course_id: int) -> bool:
+    return await CourseDAO.delete(db, course_id)
+
+
 # ----- Enrollments -----
 async def list_my_enrollments(
     db: AsyncSession, user_id: int, limit: int = 100, offset: int = 0
