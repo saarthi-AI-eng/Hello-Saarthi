@@ -19,22 +19,30 @@ def calculate(expression: str) -> str:
     except Exception as e:
         return f"Error: {e}"
 
-def run_calculator_agent(query: str) -> ExpertResponse:
+def run_calculator_agent(query: str, messages: list = []) -> ExpertResponse:
     """
     Executes the calculator agent.
     """
     logger.info(f"--- Running Calculator Agent for: {query} ---")
-    
+
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    
     llm_with_tools = llm.bind_tools([calculate])
-    
+
+    # Build history (exclude last message which is the current query)
+    history = []
+    for msg in messages[:-1]:
+        if msg["role"] == "user":
+            history.append(HumanMessage(content=msg["content"]))
+        elif msg["role"] == "assistant":
+            history.append(SystemMessage(content=f"Assistant: {msg['content']}"))
+
     try:
-        messages = [
-            SystemMessage(content="You are a calculator agent. Use the 'calculate' tool to solve math problems. Return the final answer clearly."),
-            HumanMessage(content=query)
-        ]
-        response = llm_with_tools.invoke(messages)
+        lc_messages = (
+            [SystemMessage(content="You are a calculator agent. Use the 'calculate' tool to solve math problems. Return the final answer clearly.")]
+            + history
+            + [HumanMessage(content=query)]
+        )
+        response = llm_with_tools.invoke(lc_messages)
         
         content = response.content
         
@@ -72,5 +80,5 @@ from src.utils.state import AgentState
 
 def calculator_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    res = run_calculator_agent(query)
+    res = run_calculator_agent(query, messages=state.get("messages", []))
     return {"results": {"calculator_agent": res}}

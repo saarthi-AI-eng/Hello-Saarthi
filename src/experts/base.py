@@ -35,33 +35,41 @@ def get_expert_tools(expert_name: str):
         
     return tools
 
-def run_expert(expert_name: str, query: str, mode: str = "fast") -> ExpertResponse:
+def _build_history_messages(messages: List[Dict[str, Any]]) -> List:
+    """Converts session message dicts to LangChain message objects (excludes last message)."""
+    lc_messages = []
+    for msg in messages[:-1]:
+        if msg["role"] == "user":
+            lc_messages.append(HumanMessage(content=msg["content"]))
+        elif msg["role"] == "assistant":
+            lc_messages.append(SystemMessage(content=f"Assistant: {msg['content']}"))
+    return lc_messages
+
+def run_expert(expert_name: str, query: str, mode: str = "fast", messages: List[Dict[str, Any]] = []) -> ExpertResponse:
     """
     Runs the expert agent and returns a structured ExpertResponse.
     """
     logger.info(f"--- Running Expert: {expert_name} (Mode: {mode}) ---")
-    
+
     tools = get_expert_tools(expert_name)
     prompt_str = get_prompt("expert_system", expert_name=expert_name, mode=mode)
-    
+
     if expert_name == "notes_agent":
         prompt_str += "\n\nCRITICAL: You must answer ONLY from the provided context (citations). " \
                       "If the answer is NOT in the context, you MUST set 'is_knowledge_present' to False " \
                       "and return a generic 'I do not have this information in my notes' message."
-    
+
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    
+
     structured_llm = llm.with_structured_output(ExpertResponse, method="json_schema", strict=True)
-    
+    history = _build_history_messages(messages)
+
     if mode == "planning":
         llm_with_tools = llm.bind_tools(tools)
-        
-        messages = [
-            SystemMessage(content=prompt_str),
-            HumanMessage(content=query)
-        ]
-        
-        response = llm_with_tools.invoke(messages)
+
+        lc_messages = [SystemMessage(content=prompt_str)] + history + [HumanMessage(content=query)]
+
+        response = llm_with_tools.invoke(lc_messages)
         
         tool_outputs = []
         
@@ -92,37 +100,39 @@ def run_expert(expert_name: str, query: str, mode: str = "fast") -> ExpertRespon
                 f"If the tool output indicates no information found, set is_knowledge_present=False."
             )
             
-            final_messages = [
-                SystemMessage(content=f"{prompt_str}\nYou must respond as {expert_name}."),
-                HumanMessage(content=final_prompt)
-            ]
-            
+            final_messages = (
+                [SystemMessage(content=f"{prompt_str}\nYou must respond as {expert_name}.")]
+                + history
+                + [HumanMessage(content=final_prompt)]
+            )
             return structured_llm.invoke(final_messages)
-            
+
         else:
-             # No tools called, just return structured response
-            final_messages = [
-                SystemMessage(content=f"{prompt_str}\nYou must respond as {expert_name}."),
-                HumanMessage(content=query)
-            ]
+            # No tools called, just return structured response
+            final_messages = (
+                [SystemMessage(content=f"{prompt_str}\nYou must respond as {expert_name}.")]
+                + history
+                + [HumanMessage(content=query)]
+            )
             return structured_llm.invoke(final_messages)
         
     else:
         # Fast mode: Direct Structured LLM call
-        messages = [
-            SystemMessage(content=f"{prompt_str}\nYou must respond as {expert_name}."),
-            HumanMessage(content=query)
-        ]
-        return structured_llm.invoke(messages)
+        lc_messages = (
+            [SystemMessage(content=f"{prompt_str}\nYou must respond as {expert_name}.")]
+            + history
+            + [HumanMessage(content=query)]
+        )
+        return structured_llm.invoke(lc_messages)
 
 from src.utils.state import AgentState
 
 def notes_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    res = run_expert("notes_agent", query, mode="planning") 
+    res = run_expert("notes_agent", query, mode="planning", messages=state.get("messages", []))
     return {"results": {"notes_agent": res}}
 
 def books_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    res = run_expert("books_agent", query, mode="planning") 
+    res = run_expert("books_agent", query, mode="planning", messages=state.get("messages", []))
     return {"results": {"books_agent": res}}
