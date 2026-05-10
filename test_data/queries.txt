@@ -1,0 +1,123 @@
+# ════════════════════════════════════════════════════════════════
+#  SAARTHI — COMPREHENSIVE TEST QUERIES
+#  5 queries per agent (Easy → Complex), tailored to KB content
+# ════════════════════════════════════════════════════════════════
+
+
+# ─────────────────────────────────────────────
+# 📝 NOTES AGENT (Z-Transform, DFT, FFT, Filters)
+# ─────────────────────────────────────────────
+
+# N1 (Easy) — Direct definition lookup
+What is the Z-Transform and what is its Region of Convergence from Notes agent?
+
+# N2 (Medium) — Specific property
+Explain the Differentiation Property of the Z-Transform with an example from Notes agent.
+
+# N3 (Medium) — Multi-concept
+What is the relationship between DFT and DTFT? How does sampling the DTFT give us the DFT from Notes agent?
+
+# N4 (Hard) — Application + derivation
+Explain how the Radix-2 DIT FFT algorithm works. What is the butterfly computation and how does bit-reversal ordering apply from Notes agent?
+
+# N5 (Complex) — Design problem from notes
+Explain the Bilinear Transformation method for IIR filter design. How does frequency warping occur, and how do you calculate the order of a Butterworth filter using this method from Notes agent?
+
+
+# ─────────────────────────────────────────────
+# 📚 BOOKS AGENT (Oppenheim — Signals & Systems)
+# ─────────────────────────────────────────────
+
+# B1 (Easy) — Core concept from Oppenheim Ch.1
+What is an LTI system and what are its fundamental properties from books agent?
+
+# B2 (Medium) — Fourier analysis
+Explain the Fourier Series representation of periodic signals. What are the Dirichlet conditions from books agent?
+
+# B3 (Medium) — Convolution
+How does convolution work for continuous-time LTI systems? Derive the convolution integral from books agent.
+
+# B4 (Hard) — Laplace Transform
+What is the Laplace Transform and how is it related to the Fourier Transform? Explain the Region of Convergence for causal, anti-causal, and two-sided signals from books agent.
+
+# B5 (Complex) — System analysis
+Given a system with transfer function H(s) = (s+1)/(s^2 + 3s + 2), explain how to find the impulse response, determine stability, and sketch the pole-zero plot. What happens when we apply a unit step input from books agent?
+
+
+# ─────────────────────────────────────────────
+# 🎥 VIDEO AGENT (488 lecture transcripts)
+# ─────────────────────────────────────────────
+
+# V1 (Easy) — Basic signal concept
+What is the difference between continuous-time and discrete-time signals?
+
+# V2 (Medium) — Conceptual explanation
+Explain the concept of convolution using a visual or intuitive approach. How do we flip and shift?
+
+# V3 (Medium) — Frequency domain
+What is the Discrete Fourier Transform and why is it important for digital signal processing?
+
+# V4 (Hard) — Practical application
+How does the FFT algorithm reduce the computational complexity of the DFT? Explain with the divide-and-conquer approach.
+
+# V5 (Complex) — Filter design
+Explain the design of digital filters using the windowing method. What are the tradeoffs between different window functions like rectangular, Hamming, and Kaiser windows from video agent?
+
+
+# ─────────────────────────────────────────────
+# 🧮 CALCULATOR AGENT (Math computations)
+# ─────────────────────────────────────────────
+
+# C1 (Easy) — Simple arithmetic
+What is 2^10 + 3 * sin(pi/4)?
+
+# C2 (Medium) — Multi-step
+Calculate the magnitude of the frequency response |H(e^jw)| at w = pi/4 for a system with H(z) = (1 - 0.5*z^(-1)) / (1 - 0.8*z^(-1)). Substitute z = e^(j*pi/4) use multi agents and then  calculator agents to calculate properly?.
+# C3 (Medium) — Matrix operation
+Find the eigenvalues of the matrix [[2, 1], [1, 3]] and determine if the system is stable.
+
+# C4 (Hard) — Polynomial roots + Z-transform
+Find the poles and zeros of H(z) = (z^2 + 0.5z + 0.25) / (z^2 - 1.2z + 0.36). Determine if the system is causal and stable.
+
+# C5 (Complex) — Multi-step signal processing computation
+Compute the 4-point DFT of the sequence x[n] = {1, 2, 3, 4} using the DFT formula X[k] = sum(x[n] * e^(-j*2*pi*k*n/N)) for k = 0, 1, 2, 3. Then compute the inverse DFT to verify use multi agents and calculator agents to calculate properly?.
+
+
+# ─────────────────────────────────────────────
+# 🤖 SAARTHI AGENT (General / Conversational)
+# ─────────────────────────────────────────────
+
+# S1 (Easy) — Greeting
+Hey Saarthi! Who are you and what can you help me with?
+
+# S2 (Medium) — Study advice
+I have my Signals and Systems exam in 2 days. What topics should I prioritize and how should I study?
+
+# S3 (Medium) — Conceptual comparison
+What is the difference between FIR and IIR filters? When would I use one over the other?
+
+# S4 (Hard) — Exam strategy
+Can you create a quick revision plan for Z-Transform, DFT, and FFT? Include the key formulas I must memorize.
+
+# S5 (Complex) — Cross-domain
+Explain the entire signal processing pipeline: from sampling an analog signal, to applying DFT, designing a filter, and reconstructing the output. Give me the big picture.
+
+
+# ─────────────────────────────────────────────
+# 🧠 MIND MODE (All agents combined)
+# ─────────────────────────────────────────────
+
+# M1 (Medium) — Cross-source synthesis
+What is the Z-Transform? Give me the definition, properties, and a worked example.
+
+# M2 (Hard) — Multi-concept integration
+Explain circular convolution vs linear convolution. How can we use the DFT to perform linear convolution? Include the mathematical relationship and practical steps.
+
+# M3 (Hard) — System analysis
+What is the frequency response of an LTI system? How do poles and zeros affect the magnitude and phase response? Include examples from both continuous and discrete domains.
+
+# M4 (Complex) — Full design problem
+Explain the complete process of designing a Butterworth low-pass IIR filter using the bilinear transformation. Start from specifications, compute the filter order, find the poles, and explain frequency warping.
+
+# M5 (Complex) — Deep synthesis
+Compare the Overlap-Add and Overlap-Save methods for block convolution. When would you use each? How do they relate to FFT-based filtering? Include computational complexity analysis.
