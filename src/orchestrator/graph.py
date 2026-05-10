@@ -6,6 +6,7 @@ from src.experts.calculator import calculator_agent_node
 from src.experts.saarthi import saarthi_agent_node
 from src.experts.video import video_agent_node
 from src.experts.mind import mind_fan_out_node, mind_agent_node
+from src.experts.data_analysis import data_analysis_agent_node
 from src.schemas.models import ExpertResponse
 import logging
 
@@ -21,6 +22,7 @@ def create_graph():
     workflow.add_node("video_agent", video_agent_node)
     workflow.add_node("mind_fan_out", mind_fan_out_node)
     workflow.add_node("mind_agent", mind_agent_node)
+    workflow.add_node("data_analysis_agent", data_analysis_agent_node)
     
     workflow.set_entry_point("orchestrator")
     
@@ -29,7 +31,9 @@ def create_graph():
             return "mind_fan_out"
         
         expert = state.get("current_expert")
-        if expert == "notes_agent":
+        if expert == "multi_agent":
+            return END
+        elif expert == "notes_agent":
             return "notes_agent"
         elif expert == "books_agent":
             return "books_agent"
@@ -39,6 +43,8 @@ def create_graph():
             return "saarthi_agent"
         elif expert == "video_agent":
             return "video_agent"
+        elif expert == "data_analysis_agent":
+            return "data_analysis_agent"
         else:
             return "saarthi_agent"  
 
@@ -63,6 +69,7 @@ def create_graph():
             "saarthi_agent": "saarthi_agent",
             "video_agent": "video_agent",
             "mind_fan_out": "mind_fan_out",
+            "data_analysis_agent": "data_analysis_agent",
             END: END
         }
     )
@@ -76,10 +83,12 @@ def create_graph():
         }
     )
     
+    workflow.add_edge("mind_fan_out", "mind_agent")
     workflow.add_edge("mind_agent", END)
     workflow.add_edge("books_agent", END)
     workflow.add_edge("calculator_agent", END)
     workflow.add_edge("saarthi_agent", END)
     workflow.add_edge("video_agent", END)
+    workflow.add_edge("data_analysis_agent", END)
     
     return workflow.compile()

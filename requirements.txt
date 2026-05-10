@@ -1,0 +1,31 @@
+# Saarthi — AI Multi-Agent Study Assistant
+# Install with: pip install -r requirements.txt
+
+# Core LLM & Agent Framework
+langchain>=0.3.0
+langchain-openai>=0.2.0
+langchain-community>=0.3.0
+langchain-core>=0.3.0
+langchain-text-splitters>=0.3.0
+langgraph>=0.2.0
+openai>=1.50.0
+
+# Vector Store
+faiss-cpu>=1.8.0
+
+# Embeddings & PDF Parsing
+docling>=2.0.0
+
+# Math / Computation
+numexpr>=2.10.0
+numpy>=1.26.0
+pandas>=2.2.0
+
+# Web UI
+streamlit>=1.40.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Pydantic (for schema validation)
+pydantic>=2.0.0

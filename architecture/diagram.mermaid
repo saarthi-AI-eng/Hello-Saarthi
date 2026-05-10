@@ -1,55 +1,112 @@
 graph TD
-    User([" User Input"]) --> UI[" Streamlit UI"]
-    UI --> Toggle{" Mind Mode?"}
+    User(["👤 User Input"]) --> UI["🖥️ Streamlit UI\n(app.py)"]
+    UI --> Toggle{"🧠 Mind Mode?"}
 
-    Toggle -->|OFF| Orchestrator
-    Toggle -->|ON| FanOut
+    Toggle -->|OFF – Normal| Orchestrator
+    Toggle -->|ON – Synthesized| FanOut
 
-    subgraph "️ Orchestration Layer"
-        Orchestrator["Orchestrator Agent"] -->|"1. Check KBs"| KB_Manager["KB State Manager"]
-        KB_Manager -->|"2. Decompose"| Decomp["Query Decomposition"]
-        Decomp -->|"3. Route"| Router["Router (GPT-4o)"]
+    subgraph OL["⚙️ Orchestration Layer"]
+        Orchestrator["🎯 Orchestrator Node\n(orchestrator_node)"]
+        Orchestrator -->|"1. Auto-reindex KBs"| KB_Manager["📂 KB State Manager\n(kb_status.json)"]
+        KB_Manager -->|"2. Decompose query"| Router["🔀 Router\n(GPT-4o · structured output)"]
+        Router -->|"3a. Single agent"| SingleRoute["Route to Agent"]
+        Router -->|"3b. Multi-agent\ndecision"| MultiRun["Run All Sub-queries\nin Orchestrator"]
     end
 
-    subgraph " Expert Layer – Normal Flow"
-        Router -->|notes| N[" Notes Agent"]
-        Router -->|books| B[" Books Agent"]
-        Router -->|video| V[" Video Agent"]
-        Router -->|calculator| C[" Calculator Agent"]
-        Router -->|general| S[" Saarthi Agent"]
+    subgraph EL["🤖 Expert Layer – Normal Flow"]
+        SingleRoute --> N["📝 Notes Agent"]
+        SingleRoute --> B["📚 Books Agent"]
+        SingleRoute --> V["🎥 Video Agent"]
+        SingleRoute --> C["🧮 Calculator Agent"]
+        SingleRoute --> S["🤖 Saarthi Agent"]
+        SingleRoute --> DA["📊 Data Analysis Agent"]
 
-        N -->|"is_knowledge_present=False"| B
+        N -->|"is_knowledge_present=False\n→ Fallback"| B
 
-        N -->|"Mode: Planning"| N_RAG["RAG + Tools"]
-        B -->|"Mode: Planning"| B_RAG["RAG + Tools"]
-        V -->|"Mode: Planning"| V_RAG["RAG + Tools"]
-        C --> C_TOOL["numexpr Engine"]
-        S --> S_LLM["Conversational LLM"]
+        subgraph RAG_N["ReAct Loop – Notes"]
+            N_R1["Step 1: Search KB (MANDATORY)"] --> N_R2["Step 2: Search again\n(different phrasing)"]
+            N_R2 --> N_R3["Step N: Enough info?\nStop + Synthesize"]
+        end
+
+        subgraph RAG_B["ReAct Loop – Books"]
+            B_R1["Step 1: Search KB (MANDATORY)"] --> B_R2["Step 2+: Deeper dives"]
+            B_R2 --> B_R3["Synthesize"]
+        end
+
+        N --> RAG_N
+        B --> RAG_B
+        V --> V_RAG["ReAct Loop\n(same pattern)"]
+
+        subgraph CALC["Calculator ReAct Loop"]
+            C_T1["Tool: calculate(expr)\nnumexpr – fast arithmetic"] 
+            C_T2["Tool: python_math(code)\nNumPy sandbox – complex math\neigenvalues · matrices · DFT"]
+            C_T1 -.-> C_T2
+        end
+        C --> CALC
+
+        S --> S_LLM["Conversational GPT-4.1\nFull history context"]
+        DA --> DA_TOOL["pandas + matplotlib\nCSV analysis"]
     end
 
-    subgraph " Mind Mode Flow"
-        FanOut["Fan-Out Node"] --> MN[" Notes Agent"]
-        FanOut --> MB[" Books Agent"]
-        FanOut --> MV[" Video Agent"]
-        MN --> Mind[" Mind Agent (GPT-4.1)"]
+    subgraph ML["🧠 Mind Mode Flow"]
+        FanOut["📡 Fan-Out Node\nmind_fan_out_node"] --> MN["📝 Notes Agent\n(ReAct)"]
+        FanOut --> MB["📚 Books Agent\n(ReAct)"]
+        FanOut --> MV["🎥 Video Agent\n(ReAct)"]
+        MN --> Mind["🧠 Mind Agent\n(GPT-4.1 · temp=0.2)"]
         MB --> Mind
         MV --> Mind
-        Mind -->|"Cited Answer ¹²³"| Synth
+        Mind -->|"Merged cited answer [1][2][3]"| MindOut["MindAgentResponse\ncontent + references[]"]
     end
 
-    subgraph " Data Layer"
-        NKB[("Notes FAISS\n(JSON → TXT)")] -.->|retrieve| N_RAG
-        BKB[("Books FAISS\n(PDF + Docling OCR)")] -.->|retrieve| B_RAG
-        VKB[("Video FAISS\n(488 Transcripts)")] -.->|retrieve| V_RAG
-
+    subgraph DL["💾 Data Layer"]
+        NKB[("📝 Notes FAISS\n158 txt files\nJSON → extracted notes")] -.->|k=5 chunks| RAG_N
+        BKB[("📚 Books FAISS\nOppenheim S&S\nDocling OCR → chunks")] -.->|k=5 chunks| RAG_B
+        VKB[("🎥 Video FAISS\n488 transcripts\nYouTube lectures")] -.->|k=5 chunks| V_RAG
         NKB -.->|retrieve| MN
         BKB -.->|retrieve| MB
         VKB -.->|retrieve| MV
+        EMB["🔢 text-embedding-3-large\n(3072-dim vectors)"] -.->|embed| NKB
+        EMB -.->|embed| BKB
+        EMB -.->|embed| VKB
     end
 
-    N_RAG --> Synth["Response Renderer\n(Streaming + LaTeX)"]
-    B_RAG --> Synth
-    V_RAG --> Synth
-    C_TOOL --> Synth
-    S_LLM --> Synth
-    Synth --> UI
+    subgraph MULTI["🔀 Multi-Agent Orchestration"]
+        MultiRun --> MA1["Agent 1 (e.g. books_agent)"]
+        MultiRun --> MA2["Agent 2 (e.g. calculator_agent)"]
+        MA1 --> MACombine["Combined Results Dict"]
+        MA2 --> MACombine
+    end
+
+    subgraph RS["🎨 Response Renderer"]
+        Renderer["Streamlit Renderer\n(app.py)"]
+        Renderer --> LaTeX["fix_latex()\nAuto-wrap bare LaTeX → $$...$$"]
+        Renderer --> Stream["stream_markdown()\nToken streaming"]
+        Renderer --> Badge["Agent Badge\n(colored per agent)"]
+        Renderer --> TracExp["🧠 ReAct Trace Expander\nThink → Act → Observe steps"]
+        Renderer --> SrcExp["📎 Sources Expander\nFAISS citations"]
+        Renderer --> RefTable["📎 Mind Refs Table\n[1][2][3] → file + snippet"]
+    end
+
+    RAG_N --> Renderer
+    RAG_B --> Renderer
+    V_RAG --> Renderer
+    CALC --> Renderer
+    S_LLM --> Renderer
+    DA_TOOL --> Renderer
+    MindOut --> Renderer
+    MACombine --> Renderer
+    Renderer --> UI
+
+    subgraph SCHEMAS["📐 Pydantic Schemas (strict=True)"]
+        ExR["ExpertResponse\nagent_name · content · sources[]\nconfidence_score · is_knowledge_present"]
+        RO["RouterOutput\nsub_queries: List[SubQuery]"]
+        MAR["MindAgentResponse\ncontent · references[]"]
+    end
+
+    style OL fill:#1e3a5f,stroke:#4a9eff,color:#fff
+    style EL fill:#1a3d2e,stroke:#4ade80,color:#fff
+    style ML fill:#3d1a5f,stroke:#c084fc,color:#fff
+    style DL fill:#3d2a1a,stroke:#fb923c,color:#fff
+    style MULTI fill:#2a1a3d,stroke:#818cf8,color:#fff
+    style RS fill:#1a2a3d,stroke:#38bdf8,color:#fff
+    style SCHEMAS fill:#2a2a1a,stroke:#facc15,color:#fff

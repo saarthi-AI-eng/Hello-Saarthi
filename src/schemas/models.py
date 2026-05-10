@@ -8,6 +8,7 @@ class ExpertName(str, Enum):
     CALCULATOR_AGENT = "calculator_agent"
     SAARTHI_AGENT = "saarthi_agent"
     VIDEO_AGENT = "video_agent"
+    DATA_ANALYSIS_AGENT = "data_analysis_agent"
 
 class SubQuery(BaseModel):
     """
