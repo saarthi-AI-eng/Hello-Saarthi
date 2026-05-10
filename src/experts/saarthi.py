@@ -53,11 +53,12 @@ def run_saarthi_agent(query: str, messages: list = []) -> ExpertResponse:
     response = structured_llm.invoke(llm_messages)
     return response
 
+# Wrapper for Node
 from src.utils.state import AgentState
 
 def saarthi_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
+    # Pass full messages from state
     messages = state.get("messages", [])
     res = run_saarthi_agent(query, messages)
-    return {"results": {"saarthi_agent": res, "saarthi_agent_trace": []}}
-
+    return {"results": {"saarthi_agent": res}}
