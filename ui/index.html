@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saarthi — API Test Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h1>🎓 Saarthi</h1>
+    <p class="subtitle">API Test Console</p>
+  </div>
+
+  <div class="sidebar-section">
+    <h3>⚙️ Settings</h3>
+    <label class="label-sm">API Base URL</label>
+    <input type="text" id="apiUrl" value="http://localhost:8000" class="input-field">
+    <button class="btn btn-sm btn-outline" onclick="checkHealth()">🩺 Health Check</button>
+    <div id="healthStatus" class="status-box"></div>
+  </div>
+
+  <div class="sidebar-section">
+    <h3>🧠 Mode</h3>
+    <div class="toggle-group">
+      <label><input type="radio" name="mode" value="planning" checked> Planning (ReAct)</label>
+      <label><input type="radio" name="mode" value="fast"> Fast (Direct)</label>
+    </div>
+    <label class="toggle-label">
+      <input type="checkbox" id="mindMode"> 🧠 Mind Mode
+    </label>
+  </div>
+
+  <div class="sidebar-section">
+    <h3>💬 Threads</h3>
+    <div class="btn-row">
+      <button class="btn btn-sm btn-primary" onclick="newThread()">➕ New</button>
+      <button class="btn btn-sm btn-outline" onclick="loadThreads()">🔃 Refresh</button>
+    </div>
+    <div id="threadList" class="thread-list"></div>
+  </div>
+
+  <div class="sidebar-section">
+    <h3>📊 Data</h3>
+    <input type="file" id="csvUpload" accept=".csv" class="input-field">
+    <button class="btn btn-sm btn-outline" onclick="uploadCSV()">⬆️ Upload CSV</button>
+    <button class="btn btn-sm btn-outline" onclick="listDatasets()">📋 List Datasets</button>
+    <div id="dataStatus" class="status-box"></div>
+  </div>
+
+  <div class="sidebar-section">
+    <h3>📂 Knowledge Base</h3>
+    <button class="btn btn-sm btn-outline" onclick="updateKB()">🔄 Update KB</button>
+    <button class="btn btn-sm btn-outline" onclick="checkKBStatus()">📡 KB Status</button>
+    <div id="kbStatus" class="status-box"></div>
+  </div>
+</aside>
+
+<!-- Main Chat Area -->
+<main class="main">
+  <div class="chat-container" id="chatContainer">
+    <div class="welcome-msg" id="welcomeMsg">
+      <div class="welcome-icon">🎓</div>
+      <h2>Welcome to Saarthi</h2>
+      <p>AI-powered study assistant — Notes · Books · Videos · Calculator</p>
+      <p class="hint">Start by clicking <strong>🩺 Health Check</strong> in the sidebar, then type a question below.</p>
+    </div>
+  </div>
+
+  <div class="input-bar">
+    <input type="text" id="chatInput" placeholder="Ask anything about signals, systems, or your data..." 
+           onkeydown="if(event.key==='Enter')sendMessage()">
+    <button class="btn btn-primary btn-send" onclick="sendMessage()">
+      <span>↑</span>
+    </button>
+  </div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
