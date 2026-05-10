@@ -23,11 +23,11 @@ def create_thread(title: str) -> str:
 
 
 def list_threads() -> List[Dict]:
-    """Returns all threads sorted by newest first."""
+    """Returns all threads sorted by newest first, including linked dataset name."""
     client = get_client()
     res = (
         client.table("threads")
-        .select("id, title, created_at")
+        .select("id, title, created_at, dataset_name")
         .order("created_at", desc=True)
         .execute()
     )
