@@ -12,7 +12,7 @@ def run_saarthi_agent(query: str, messages: list = []) -> ExpertResponse:
     """
     logger.info(f"--- Running Saarthi (General Agent) for: {query} ---")
     
-    llm = ChatOpenAI(model="gpt-4o", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4.1", temperature=0.7)
     
     system_prompt = (
         "You are Saarthi, a friendly and humble AI assistant designed to help engineering students, "
@@ -27,6 +27,12 @@ def run_saarthi_agent(query: str, messages: list = []) -> ExpertResponse:
         "Guidelines:\n"
         "- Always maintain a helpful tone.\n"
         "- Follow the product's policy: Be safe, respectful, and educational.\n"
+        "MANDATORY MATH FORMATTING — follow this exactly:\n"
+        "- Inline variables/expressions: wrap in single dollar signs: $H(s)$, $x[n]$, $\\\\omega_0$\n"
+        "- Standalone equations: wrap in double dollar signs on their own line:\n"
+        "  $$X(z) = \\\\sum_{n=0}^{\\\\infty} x[n] z^{-n}$$\n"
+        "- NEVER write bare LaTeX like: H(s) = \\\\frac{N(s)}{D(s)}\n"
+        "- ALWAYS use $...$ or $$...$$ around ANY mathematical expression.\n"
         "IMPORTANT: You must identify yourself as 'saarthi_agent' in the structured output."
     )
     
@@ -47,12 +53,11 @@ def run_saarthi_agent(query: str, messages: list = []) -> ExpertResponse:
     response = structured_llm.invoke(llm_messages)
     return response
 
-# Wrapper for Node
 from src.utils.state import AgentState
 
 def saarthi_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    # Pass full messages from state
     messages = state.get("messages", [])
     res = run_saarthi_agent(query, messages)
-    return {"results": {"saarthi_agent": res}}
+    return {"results": {"saarthi_agent": res, "saarthi_agent_trace": []}}
+

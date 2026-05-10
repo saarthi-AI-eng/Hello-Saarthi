@@ -10,5 +10,5 @@ def run_video_agent(query: str, messages: list = []) -> ExpertResponse:
 
 def video_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    res = run_video_agent(query, messages=state.get("messages", []))
-    return {"results": {"video_agent": res}}
+    res, trace = run_video_agent(query, messages=state.get("messages", []))
+    return {"results": {"video_agent": res, "video_agent_trace": trace}}

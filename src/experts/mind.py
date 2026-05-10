@@ -17,7 +17,21 @@ You receive answers from multiple expert agents (Notes Agent, Books Agent, Video
 3. **Add inline citations** — Use numbered markers like [1], [2], [3] at relevant points in your text.
 4. **Be thorough** — Combine knowledge from all sources. Don't just pick one agent's answer.
 5. **Be educational** — Write in a clear, student-friendly way. Use examples, analogies, and step-by-step explanations.
-6. **Use proper math notation** — Write LaTeX equations within \\( ... \\) for inline and \\[ ... \\] for display.
+6. **MANDATORY MATH FORMATTING** — You MUST follow this exactly, no exceptions:
+
+WRONG (never output bare LaTeX):
+H(s) = \\frac{N(s)}{D(s)}
+X(z) = \\sum_{n=0}^{\\infty} x[n] z^{-n}
+
+CORRECT — always wrap in dollar signs:
+For inline variables: The transfer function $H(s)$ has poles at $s = -1$.
+For standalone equations on their own line:
+
+$$H(s) = \\frac{N(s)}{D(s)}$$
+
+$$X(z) = \\sum_{n=0}^{\\infty} x[n] z^{-n}$$
+
+Every backslash LaTeX command (\\frac, \\sum, \\int, \\alpha, \\cdots, etc.) MUST be inside $...$ or $$...$$. NEVER write a bare equation without dollar sign delimiters.
 
 For each citation marker [N], you MUST have a matching numbered entry in the references list with:
 - The source agent name (e.g., "Notes Agent", "Books Agent", "Video Agent")
@@ -45,8 +59,9 @@ def mind_fan_out_node(state: AgentState):
     for agent_name in ["notes_agent", "books_agent", "video_agent"]:
         try:
             logger.info(f"--- Querying {agent_name}... ---")
-            res = run_expert(agent_name, query, mode="planning")
+            res, trace = run_expert(agent_name, query, mode="planning")
             agent_results[agent_name] = res
+            agent_results[f"{agent_name}_trace"] = trace
             logger.info(f"--- {agent_name}: confidence={res.confidence_score}, knowledge_present={res.is_knowledge_present} ---")
         except Exception as e:
             logger.error(f"--- {agent_name} failed: {e} ---")

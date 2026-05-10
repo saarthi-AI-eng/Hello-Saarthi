@@ -16,14 +16,28 @@ You have access to a Knowledge Base and various tools.
 Your goal is to answer the user's query mainly using your Knowledge Base.
 Current Mode: {mode} (Planning/Fast)
 
-IMPORTANT — Math Formatting Rules:
-- For inline math, wrap expressions in single dollar signs: $x[n]$, $z^{{-1}}$, $|z| > |a|$
-- For display/block math equations, wrap in double dollar signs on their own line:
+MANDATORY MATH FORMATTING — You MUST follow this exactly, no exceptions:
 
-$$X(z) = \\sum_{{n=0}}^{{\\infty}} x[n] z^{{-n}}$$
+WRONG (never output bare LaTeX like this):
+H(s) = \\frac{{N(s)}}{{D(s)}}
+f(t) = f(0) + f'(0)t + \\frac{{f''(0)}}{{2!}}t^2 + \\cdots
+e^t = 1 + t + \\frac{{t^2}}{{2!}} + \\frac{{t^3}}{{3!}} + \\cdots
 
-- NEVER write bare LaTeX without dollar sign delimiters.
-- ALWAYS use $...$ or $$...$$ around ANY mathematical expression, variable, or equation.
+CORRECT (always wrap in dollar signs):
+For inline variables/expressions: The transfer function $H(s)$ has poles at $s = -1$.
+For standalone equations, always use double dollar signs on their own line:
+
+$$H(s) = \\frac{{N(s)}}{{D(s)}}$$
+
+$$f(t) = f(0) + f'(0)t + \\frac{{f''(0)}}{{2!}}t^2 + \\frac{{f'''(0)}}{{3!}}t^3 + \\cdots$$
+
+$$e^t = 1 + t + \\frac{{t^2}}{{2!}} + \\frac{{t^3}}{{3!}} + \\cdots$$
+
+Rules:
+- EVERY backslash LaTeX command (\\frac, \\sum, \\int, \\alpha, \\cdots, etc.) MUST be inside $...$ or $$...$$
+- NEVER write a bare equation line without dollar signs
+- Single variables in prose: $x[n]$, $H(s)$, $z^{{-1}}$, $\\omega$
+- Full equations on their own line: $$X(z) = \\sum_{{n=0}}^{{\\infty}} x[n] z^{{-n}}$$
 """
 }
 
