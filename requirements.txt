@@ -1,0 +1,9 @@
+pdf2image
+opencv-python
+numpy
+pillow
+anthropic
+openai
+qdrant-client
+python-dotenv
+jsonschema

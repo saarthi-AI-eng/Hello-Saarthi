@@ -1,0 +1,27 @@
+[
+    {
+        "id": "1",
+        "text": "Z - Transform \\quad (\\text{applicable for discrete-time intervals only})\\\\\n\\text{Time} \\longleftrightarrow \\text{Freq}\n\n\\vdots\n\\text{Let } u(n) \\text{ be the LT generation.}\n\n\\text{CTFT} \\longleftrightarrow \\text{LT}\n\nj\\omega \\longleftrightarrow \\text{(entering the capability of cycles)}\n\n\\vdots\n\\text{Let } u(n) \\text{ be the DFT generation.}\n\nX(\\omega) = \\sum^{\\infty}_{n=-\\infty} x(n) e^{-j\\omega n} \\\\\n\\Rightarrow \\text{ if } x(n) \\text{ must be summable to exist, then } X(\\omega) \\text{ exists.}\n\n\\frac{j\\omega}{e^{j\\omega} - r} \\quad r \\in \\mathbb{Z} \\\\\n\\text{If } r = 1, \\text{ we set DFT.} \\\\\n\\text{If } r \\neq 1, \\text{ we set other Transform.}\n\n\\vdots\n\\text{But a lot we worked with reducible constraints like } \\sigma+j\\omega. \\\\\n\\Rightarrow \\text{ When } r \\in \\mathbb{Z}, \\text{ we work with polar coordinates} \\\\\n\\text{of distance from the origin.} \\\\\n\\text{We have } X(z) = \\sum^{\\infty}_{n=0} x(n) z^{-n} \\\\\n\n\\text{(provided } x(n) \\text{ is summable.)}",
+        "metadata": {
+            "page_no": "1",
+            "section": "Z - Transform \\quad (\\text{applicable for discrete-time intervals only})\\\\",
+            "topics": [
+                "CTFT"
+            ],
+            "confidence": "medium"
+        }
+    },
+    {
+        "id": "2",
+        "text": "! \n\u2192 Depending on the value of \\( T_0 \\), the output may converge (or not).\n\n\u2192 The Z-transform is exactly equal to the Fourier Transform (FT), where \\( c \\) is replaced by \\( z^k \\) instead of \\( j\\omega \\), which we replace with \\( e^{j\\omega} \\):\n\\[\nX(z) = \\sum_{n=-\\infty}^{\\infty} x(n) z^{-n}\n\\]\n\nGiven \\( x(n) \\), we have:\n\\[\nX(z) = \\sum_{n=-\\infty}^{\\infty} x(n) z^{-n} = Z(x(n))\n\\]\n\nThe relationship is expressed as:\n\\( x(n) \\leftrightarrow Z \\leftrightarrow X(z) \\)\n\n\u2192 If the FT exists, then it must be:\n\\[\n\\mathcal{F}\\{x(n)\\} = Z\\{[x(n)]\\}, \\, z = e^{j\\omega}\n\\]\n\nThe subject representing the \\( z \\)-plane is:\n\\[ \nz = re^{j\\theta} \n\\]\n- \\( |z| \\) intersects \\( -\\text{Re} z \\).\n\n\u2192 The most important line is \\( |z| = 1 \\), which describes a circle (radius = 1):\n\\[\n\\frac{1}{|z|} \\text{ (unit circle) }\n\\]",
+        "metadata": {
+            "page_no": "2",
+            "section": "\u2192 Depending on the value of \\( T_0 \\), the output may converge (or not).",
+            "topics": [
+                "Fourier Transform",
+                "Z-Transform"
+            ],
+            "confidence": "medium"
+        }
+    }
+]
