@@ -1,6 +1,6 @@
-"""Chat message request/response (frontend Chat / AIChatbot)."""
+"""Chat message request/response schemas."""
 
-from typing import Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -12,20 +12,69 @@ class ChatMessageItem(BaseModel):
 
 class ChatMessageRequest(BaseModel):
     """POST /api/chat/message (stateless)."""
-
     message: str = Field(..., min_length=1)
     conversationHistory: list[ChatMessageItem] = Field(default_factory=list)
-    contextMaterialTitle: str | None = Field(None, description="Document title when user is viewing a material; AI answers in that context.")
+    contextMaterialTitle: Optional[str] = None
 
 
 class ChatMessageResponse(BaseModel):
-    """Response: frontend expects .response."""
-
     response: str
 
 
-# --- Tutor chat conversations (persisted) ---
+# ─── SSE Streaming ────────────────────────────────────────────────────────────
 
+class StreamMessageRequest(BaseModel):
+    """POST /api/chat/stream — streams response via SSE."""
+    message: str = Field(..., min_length=1)
+    conversationHistory: list[ChatMessageItem] = Field(default_factory=list)
+    conversationId: Optional[str] = Field(None, description="If provided, exchange is persisted.")
+    contextMaterialTitle: Optional[str] = None
+
+
+# ─── Study Plan ───────────────────────────────────────────────────────────────
+
+class StudyPlanCourse(BaseModel):
+    title: str
+    code: str
+    progressPercent: int
+
+
+class StudyPlanDeadline(BaseModel):
+    title: str
+    course: str
+    dueDate: str
+    type: str  # "assignment" | "quiz"
+
+
+class StudyPlanQuizScore(BaseModel):
+    quizTitle: str
+    score: float
+    weakTopics: List[str] = Field(default_factory=list)
+
+
+class StudyPlanRequest(BaseModel):
+    """POST /api/chat/study-plan"""
+    courses: List[StudyPlanCourse] = Field(default_factory=list)
+    deadlines: List[StudyPlanDeadline] = Field(default_factory=list)
+    recentQuizScores: List[StudyPlanQuizScore] = Field(default_factory=list)
+    hoursPerDay: int = Field(default=3, ge=1, le=12)
+    focusArea: Optional[str] = None
+
+
+class StudyPlanDayBlock(BaseModel):
+    day: str          # "Monday", "Tuesday", etc.
+    sessions: List[str]  # e.g. ["09:00–10:30 · DSP: Review FFT (weak area)", ...]
+    totalHours: float
+
+
+class StudyPlanResponse(BaseModel):
+    weekPlan: List[StudyPlanDayBlock]
+    summary: str
+    priorityTopics: List[str]
+    generatedAt: str
+
+
+# ─── Conversations ────────────────────────────────────────────────────────────
 
 class ConversationResponse(BaseModel):
     id: str
@@ -59,7 +108,7 @@ class UpdateConversationRequest(BaseModel):
 
 class SendMessageRequest(BaseModel):
     message: str = Field(..., min_length=1)
-    contextMaterialTitle: str | None = Field(None, description="Document title when asking in context of a material.")
+    contextMaterialTitle: Optional[str] = None
 
 
 class SendMessageResponse(BaseModel):

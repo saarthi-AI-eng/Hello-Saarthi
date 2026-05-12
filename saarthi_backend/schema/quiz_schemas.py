@@ -61,3 +61,38 @@ class QuizQuestionUpdate(BaseModel):
     optionsJson: Optional[str] = None
     correctIndex: Optional[int] = Field(None, ge=0)
     sortOrder: Optional[int] = None
+
+
+# ─── Adaptive Quiz Generation ─────────────────────────────────────────────────
+
+class PastAttemptSummary(BaseModel):
+    quizTitle: str
+    score: float
+    answersJson: str = "[]"
+    questionsJson: str = "[]"
+
+
+class AdaptiveQuizRequest(BaseModel):
+    topic: str = Field(..., description="Subject/topic to generate quiz on, e.g. 'Z-transform'")
+    courseTitle: Optional[str] = None
+    difficulty: Optional[str] = Field(None, description="easy | medium | hard | auto")
+    numQuestions: int = Field(default=10, ge=3, le=20)
+    pastAttempts: List[PastAttemptSummary] = Field(default_factory=list)
+
+
+class GeneratedQuizQuestion(BaseModel):
+    questionText: str
+    options: List[str]
+    correctIndex: int
+    explanation: str
+    difficulty: str  # "easy" | "medium" | "hard"
+    topic: str
+
+
+class AdaptiveQuizResponse(BaseModel):
+    title: str
+    topic: str
+    difficulty: str
+    questions: List[GeneratedQuizQuestion]
+    weakAreasDetected: List[str]
+    generatedAt: str

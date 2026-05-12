@@ -9,6 +9,8 @@ from saarthi_backend.deps import get_current_user, get_db, get_pagination
 from saarthi_backend.model import User
 from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationParams
 from saarthi_backend.schema.quiz_schemas import (
+    AdaptiveQuizRequest,
+    AdaptiveQuizResponse,
     QuizAttemptResponse,
     QuizAttemptSubmitRequest,
     QuizDetailResponse,
@@ -222,3 +224,19 @@ async def list_my_attempts(
         limit=pagination.limit,
         offset=pagination.offset,
     )
+
+
+# ─── Adaptive Quiz Generation ─────────────────────────────────────────────────
+
+@router.post("/generate", response_model=AdaptiveQuizResponse)
+async def generate_adaptive_quiz(
+    body: AdaptiveQuizRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    AI-generate a quiz adapted to the student's past performance.
+    Analyzes weak topics from attempt history and targets the right difficulty.
+    """
+    result = await quiz_service.generate_adaptive_quiz(db, user.id, body)
+    return result
