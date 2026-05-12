@@ -70,7 +70,7 @@ def _index_document_sync(
     try:
         from langchain_community.vectorstores import FAISS
         from langchain_openai import OpenAIEmbeddings
-        from langchain.schema import Document
+        from langchain_core.documents import Document
     except ImportError:
         logger.error("LangChain / OpenAI packages not available for indexing")
         return False
