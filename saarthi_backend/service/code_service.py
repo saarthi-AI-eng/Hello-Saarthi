@@ -1,12 +1,21 @@
-"""Code execution service: Piston API runner + AI error explanation."""
+"""Code execution service: local subprocess runner + AI error explanation.
 
+Piston public API went whitelist-only on 2026-02-15.
+We now run code locally in a temp directory with a strict timeout.
+Each language must be installed on the host (python3, node, g++, gcc,
+javac/java, rustc, go, bash, Rscript).  Missing runtimes return a clear
+error rather than crashing.
+"""
+
+import asyncio
 import json
 import logging
 import os
+import shutil
+import tempfile
 import time
 from collections.abc import AsyncGenerator
-
-import httpx
+from pathlib import Path
 
 from saarthi_backend.schema.code_schemas import (
     CodeExecuteRequest,
@@ -14,101 +23,157 @@ from saarthi_backend.schema.code_schemas import (
     CodeExecuteResult,
     CodeExplainRequest,
     CodeExplainResponse,
-    PISTON_LANGUAGE_MAP,
-    LANGUAGE_VERSIONS,
 )
 
 logger = logging.getLogger(__name__)
 
-PISTON_URL = "https://emkc.org/api/v2/piston/execute"
-PISTON_TIMEOUT = 30.0   # seconds
+EXEC_TIMEOUT = 15  # seconds per run
+
+# ── Language → (binary, compile_cmd | None, run_cmd) ─────────────────────────
+# {lang_key: (check_binary, compile_template, run_template)}
+# Templates use {src} for source file path and {out} for compiled binary path.
+
+_LANG_CONFIG: dict[str, tuple[str, str | None, str]] = {
+    "python":     ("python3",  None,                              "python3 {src}"),
+    "javascript": ("node",     None,                              "node {src}"),
+    "cpp":        ("g++",      "g++ -O2 -o {out} {src}",         "{out}"),
+    "c":          ("gcc",      "gcc -O2 -o {out} {src} -lm",     "{out}"),
+    "java":       ("javac",    "javac {src}",                     "java -cp {dir} Main"),
+    "rust":       ("rustc",    "rustc -o {out} {src}",            "{out}"),
+    "go":         ("go",       None,                              "go run {src}"),
+    "bash":       ("bash",     None,                              "bash {src}"),
+    "r":          ("Rscript",  None,                              "Rscript {src}"),
+}
+
+_EXT: dict[str, str] = {
+    "python": "py", "javascript": "js", "cpp": "cpp", "c": "c",
+    "java": "java", "rust": "rs", "go": "go", "bash": "sh", "r": "r",
+}
 
 
-# ─── Piston execution ─────────────────────────────────────────────────────────
+# ── Execute ───────────────────────────────────────────────────────────────────
 
 async def execute_code(body: CodeExecuteRequest) -> CodeExecuteResponse:
-    lang_key = body.language.lower()
-    piston_lang = PISTON_LANGUAGE_MAP.get(lang_key, lang_key)
-    version = LANGUAGE_VERSIONS.get(lang_key, "*")
+    lang = body.language.lower()
+    config = _LANG_CONFIG.get(lang)
 
-    payload = {
-        "language": piston_lang,
-        "version": version,
-        "files": [{"name": f"main.{_ext(lang_key)}", "content": body.code}],
-        "stdin": body.stdin or "",
-        "args": [],
-        "compile_timeout": 10000,
-        "run_timeout": 10000,
-    }
-
-    t0 = time.monotonic()
-    try:
-        async with httpx.AsyncClient(timeout=PISTON_TIMEOUT) as client:
-            resp = await client.post(PISTON_URL, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-    except httpx.TimeoutException:
+    if config is None:
         return CodeExecuteResponse(
             result=CodeExecuteResult(
-                stdout="", stderr="Execution timed out after 30 seconds.",
-                exitCode=1, language=lang_key,
-                runtime=f"{piston_lang} {version}",
-            ),
-            aiExplanation="The code timed out. Check for infinite loops or excessive computation.",
-            aiSuggestions=["Add a termination condition to any loops", "Reduce input size for testing"],
+                stdout="", stderr=f"Language '{lang}' is not supported.",
+                exitCode=1, language=lang, runtime=lang,
+            )
         )
-    except Exception as e:
-        logger.exception("Piston request failed: %s", e)
+
+    binary, compile_tpl, run_tpl = config
+
+    # Check binary is installed
+    if not shutil.which(binary):
         return CodeExecuteResponse(
             result=CodeExecuteResult(
-                stdout="", stderr=f"Execution service unavailable: {e}",
-                exitCode=1, language=lang_key, runtime=f"{piston_lang} {version}",
-            ),
+                stdout="",
+                stderr=(
+                    f"Runtime '{binary}' is not installed on this server.\n"
+                    f"Ask your administrator to install {binary}."
+                ),
+                exitCode=1, language=lang, runtime=binary,
+            )
         )
 
-    elapsed_ms = (time.monotonic() - t0) * 1000
+    ext = _EXT.get(lang, "txt")
+    # Java requires filename == class name "Main"
+    filename = f"Main.{ext}" if lang == "java" else f"main.{ext}"
 
-    # Piston returns run.stdout / run.stderr / run.code
-    run = data.get("run", {})
-    compile_out = data.get("compile", {})
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src = str(Path(tmpdir) / filename)
+        out = str(Path(tmpdir) / "prog")
 
-    stdout = run.get("stdout", "")
-    stderr = (compile_out.get("stderr", "") + run.get("stderr", "")).strip()
-    exit_code = run.get("code", 0) if run.get("code") is not None else 0
+        Path(src).write_text(body.code, encoding="utf-8")
 
-    result = CodeExecuteResult(
-        stdout=stdout,
-        stderr=stderr,
-        exitCode=exit_code,
-        language=lang_key,
-        runtime=f"{piston_lang} {data.get('version', version)}",
-        executionMs=round(elapsed_ms, 1),
-    )
+        t0 = time.monotonic()
+        compile_stderr = ""
 
-    # AI error explanation
-    ai_explanation: str | None = None
-    ai_suggestions: list[str] = []
+        # ── Compile step ──────────────────────────────────────────────────────
+        if compile_tpl:
+            cmd = compile_tpl.format(src=src, out=out, dir=tmpdir)
+            ok, _, compile_stderr = await _run_cmd(cmd, stdin="", cwd=tmpdir)
+            if not ok:
+                elapsed = round((time.monotonic() - t0) * 1000, 1)
+                return CodeExecuteResponse(
+                    result=CodeExecuteResult(
+                        stdout="", stderr=compile_stderr,
+                        exitCode=1, language=lang, runtime=binary,
+                        executionMs=elapsed,
+                    )
+                )
 
-    if body.explainOnError and (exit_code != 0 or stderr):
-        explain_body = CodeExplainRequest(
-            code=body.code,
-            language=lang_key,
+        # ── Run step ──────────────────────────────────────────────────────────
+        run_cmd = run_tpl.format(src=src, out=out, dir=tmpdir)
+        exit_ok, stdout, stderr = await _run_cmd(
+            run_cmd, stdin=body.stdin or "", cwd=tmpdir
+        )
+        elapsed = round((time.monotonic() - t0) * 1000, 1)
+        exit_code = 0 if exit_ok else 1
+
+        result = CodeExecuteResult(
+            stdout=stdout,
             stderr=stderr,
             exitCode=exit_code,
-            courseContext=body.courseContext,
+            language=lang,
+            runtime=binary,
+            executionMs=elapsed,
         )
-        explained = await explain_error(explain_body)
-        ai_explanation = explained.explanation
-        ai_suggestions = explained.suggestions
 
-    return CodeExecuteResponse(
-        result=result,
-        aiExplanation=ai_explanation,
-        aiSuggestions=ai_suggestions,
-    )
+        ai_explanation: str | None = None
+        ai_suggestions: list[str] = []
+
+        if body.explainOnError and (exit_code != 0 or stderr):
+            explain_body = CodeExplainRequest(
+                code=body.code, language=lang, stderr=stderr,
+                exitCode=exit_code, courseContext=body.courseContext,
+            )
+            explained = await explain_error(explain_body)
+            ai_explanation = explained.explanation
+            ai_suggestions = explained.suggestions
+
+        return CodeExecuteResponse(
+            result=result,
+            aiExplanation=ai_explanation,
+            aiSuggestions=ai_suggestions,
+        )
 
 
-# ─── AI error explanation (sync, JSON mode) ───────────────────────────────────
+async def _run_cmd(
+    cmd: str, stdin: str, cwd: str, timeout: int = EXEC_TIMEOUT
+) -> tuple[bool, str, str]:
+    """Run a shell command, return (success, stdout, stderr)."""
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+        )
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(input=stdin.encode()),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return False, "", f"Execution timed out after {timeout} seconds."
+
+        stdout = stdout_b.decode(errors="replace")
+        stderr = stderr_b.decode(errors="replace")
+        return proc.returncode == 0, stdout, stderr
+
+    except Exception as e:
+        return False, "", f"Execution error: {e}"
+
+
+# ── AI error explanation ───────────────────────────────────────────────────────
 
 _EXPLAIN_SYSTEM = """You are an expert programming tutor for engineering students.
 A student's code has failed. Analyse the error and provide a clear explanation.
@@ -162,7 +227,7 @@ async def explain_error(body: CodeExplainRequest) -> CodeExplainResponse:
         )
 
 
-# ─── SSE streaming error explanation ──────────────────────────────────────────
+# ── SSE streaming explanation ─────────────────────────────────────────────────
 
 _EXPLAIN_STREAM_SYSTEM = """You are a programming tutor. A student's code failed.
 Explain what went wrong in clear, friendly plain English. Be specific about the error.
@@ -197,7 +262,7 @@ async def stream_explain_error(body: CodeExplainRequest) -> AsyncGenerator[str, 
         async for chunk in stream:
             delta = chunk.choices[0].delta.content
             if delta:
-                yield f"data: {delta.replace(chr(10), '\\n')}\n\n"
+                yield f"data: {delta.replace(chr(10), chr(92) + 'n')}\n\n"
 
         yield "data: [DONE]\n\n"
 
@@ -207,23 +272,14 @@ async def stream_explain_error(body: CodeExplainRequest) -> AsyncGenerator[str, 
         yield "data: [DONE]\n\n"
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-
-def _ext(lang: str) -> str:
-    return {
-        "python": "py", "javascript": "js", "typescript": "ts",
-        "cpp": "cpp", "c": "c", "java": "java", "rust": "rs",
-        "go": "go", "bash": "sh", "r": "r", "matlab_octave": "m",
-    }.get(lang, "txt")
-
+# ── Runtime list (local, no external API) ─────────────────────────────────────
 
 async def list_runtimes() -> list[dict]:
-    """Fetch available runtimes from Piston (for language picker)."""
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get("https://emkc.org/api/v2/piston/runtimes")
-            resp.raise_for_status()
-            return resp.json()
-    except Exception as e:
-        logger.warning("Failed to fetch Piston runtimes: %s", e)
-        return []
+    """Return which runtimes are actually installed on this machine."""
+    result = []
+    for lang, (binary, _, _) in _LANG_CONFIG.items():
+        if shutil.which(binary):
+            result.append({"language": lang, "runtime": binary, "available": True})
+        else:
+            result.append({"language": lang, "runtime": binary, "available": False})
+    return result
