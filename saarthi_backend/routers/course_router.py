@@ -40,6 +40,7 @@ from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationP
 from saarthi_backend.service import course_service
 from saarthi_backend.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from saarthi_backend.utils.logging import get_logger
+from saarthi_backend.service.indexing_service import index_material_background, delete_material_from_index
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 logger = get_logger(__name__)
@@ -588,6 +589,15 @@ async def create_material(
         topic=body.topic,
     )
     await db.commit()
+
+    # Auto-index uploaded PDFs/txt files so the AI can answer questions from them immediately
+    if body.url and body.type in ("pdf", "txt"):
+        filename = _uploads_filename_from_url(body.url)
+        if filename:
+            file_path = _UPLOAD_DIR / filename
+            if file_path.exists():
+                index_material_background(file_path, body.title, course_id, m.id)
+
     return _material_to_response(m)
 
 
@@ -689,6 +699,8 @@ async def delete_material(
                 )
     await course_service.delete_material(db, material_id)
     await db.commit()
+    # Remove from FAISS index in background
+    delete_material_from_index(material.title, course_id, material_id)
 
 
 @router.get("/{course_id}/materials/{material_id}/file")

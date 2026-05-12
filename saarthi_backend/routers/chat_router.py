@@ -63,7 +63,9 @@ async def chat_message(body: ChatMessageRequest):
     """Stateless chat (AIChatbot, material viewer). No persistence."""
     history = [{"role": m.role, "content": m.content} for m in body.conversationHistory]
     answer = await chat_service.stateless_message(
-        body.message, history, context_material_title=body.contextMaterialTitle
+        body.message, history,
+        context_material_title=body.contextMaterialTitle,
+        course_id=body.courseId,
     )
     return ChatMessageResponse(response=answer)
 
@@ -86,7 +88,7 @@ async def stream_message(
     from saarthi_backend.service.chat_service import _apply_document_context
     from saarthi_backend.dao import ChatMessageDAO, ConversationDAO
 
-    prompt = _apply_document_context(body.message, body.contextMaterialTitle)
+    prompt = _apply_document_context(body.message, body.contextMaterialTitle, course_id=body.courseId)
 
     async def event_generator():
         full_response = []
@@ -217,7 +219,9 @@ async def send_message(
 ):
     """Non-streaming: append user message, call AI, append assistant reply."""
     result = await chat_service.send_message(
-        db, conversation_id, user.id, body.message, context_material_title=body.contextMaterialTitle
+        db, conversation_id, user.id, body.message,
+        context_material_title=body.contextMaterialTitle,
+        course_id=body.courseId,
     )
     if not result:
         raise NotFoundError("Conversation not found.", details=None)
