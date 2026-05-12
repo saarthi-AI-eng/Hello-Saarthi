@@ -1,8 +1,9 @@
-"""Chat routes: POST /message (legacy) + conversation CRUD and send message."""
+"""Chat routes: stateless message, conversation CRUD, send message, SSE stream, study plan."""
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from saarthi_backend.deps import get_current_user, get_db, get_pagination
@@ -16,6 +17,9 @@ from saarthi_backend.schema.chat_schemas import (
     CreateConversationRequest,
     SendMessageRequest,
     SendMessageResponse,
+    StreamMessageRequest,
+    StudyPlanRequest,
+    StudyPlanResponse,
     UpdateConversationRequest,
 )
 from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationParams
@@ -43,10 +47,11 @@ def _message_to_item(m) -> ChatMessageResponseItem:
     )
 
 
-# --- Legacy: stateless message (no conversation id) ---
+# ─── Stateless (AIChatbot widget) ────────────────────────────────────────────
+
 @router.post("/message", response_model=ChatMessageResponse)
 async def chat_message(body: ChatMessageRequest):
-    """Stateless chat (e.g. AIChatbot, material viewer). No persistence. Uses in-process src/ AI graph."""
+    """Stateless chat (AIChatbot, material viewer). No persistence."""
     history = [{"role": m.role, "content": m.content} for m in body.conversationHistory]
     answer = await chat_service.stateless_message(
         body.message, history, context_material_title=body.contextMaterialTitle
@@ -54,14 +59,80 @@ async def chat_message(body: ChatMessageRequest):
     return ChatMessageResponse(response=answer)
 
 
-# --- Conversations (persisted tutor chat) ---
+# ─── SSE Streaming endpoint ───────────────────────────────────────────────────
+
+@router.post("/stream")
+async def stream_message(
+    body: StreamMessageRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Stream an AI response token-by-token via Server-Sent Events.
+    Also persists the full exchange to the conversation when complete.
+    """
+    history = [{"role": m.role, "content": m.content} for m in body.conversationHistory]
+
+    from saarthi_backend.ai.adapter import run_chat_stream
+    from saarthi_backend.service.chat_service import _apply_document_context
+    from saarthi_backend.dao import ChatMessageDAO, ConversationDAO
+
+    prompt = _apply_document_context(body.message, body.contextMaterialTitle)
+
+    async def event_generator():
+        full_response = []
+        async for chunk in run_chat_stream(prompt, history):
+            yield chunk
+            if chunk.startswith("data: ") and not chunk.startswith("data: ["):
+                token = chunk[6:].rstrip("\n").replace("\\n", "\n")
+                full_response.append(token)
+
+        # Persist to DB after streaming completes
+        try:
+            if body.conversationId:
+                conv_id = int(body.conversationId)
+                conv = await ConversationDAO.get_by_id(db, conv_id, user.id)
+                if conv:
+                    await ChatMessageDAO.create(db, conv_id, "user", body.message)
+                    assistant_content = "".join(full_response)
+                    await ChatMessageDAO.create(db, conv_id, "assistant", assistant_content)
+                    await ConversationDAO.touch(db, conv_id)
+                    await db.commit()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to persist streamed message: %s", e)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ─── Study Plan Generator ─────────────────────────────────────────────────────
+
+@router.post("/study-plan", response_model=StudyPlanResponse)
+async def generate_study_plan(
+    body: StudyPlanRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Generate a personalized weekly study plan based on enrollments, deadlines, and quiz scores."""
+    plan = await chat_service.generate_study_plan(db, user.id, body)
+    return plan
+
+
+# ─── Conversations ────────────────────────────────────────────────────────────
+
 @router.post("/conversations", response_model=ConversationResponse, status_code=201)
 async def create_conversation(
     body: CreateConversationRequest,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Create a new conversation. Returns id, title, timestamps."""
     c = await chat_service.create_conversation(db, user.id, title=body.title)
     await db.commit()
     return _conversation_to_response(c)
@@ -73,7 +144,6 @@ async def list_conversations(
     db: Annotated[AsyncSession, Depends(get_db)],
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
-    """List current user's conversations, most recently updated first."""
     items, total = await chat_service.list_conversations(
         db, user.id, limit=pagination.limit, offset=pagination.offset
     )
@@ -91,7 +161,6 @@ async def get_conversation(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Get one conversation with all messages (owner only)."""
     c, messages = await chat_service.get_conversation(db, conversation_id, user.id)
     if not c:
         raise NotFoundError("Conversation not found.", details=None)
@@ -111,7 +180,6 @@ async def update_conversation(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Update conversation title (owner only)."""
     c = await chat_service.update_conversation_title(db, conversation_id, user.id, body.title)
     if not c:
         raise NotFoundError("Conversation not found.", details=None)
@@ -125,7 +193,6 @@ async def delete_conversation(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Delete conversation and all messages (owner only)."""
     deleted = await chat_service.delete_conversation(db, conversation_id, user.id)
     if not deleted:
         raise NotFoundError("Conversation not found.", details=None)
@@ -139,7 +206,7 @@ async def send_message(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Append user message, call AI (src/ graph), append assistant reply. Optionally set title from first message."""
+    """Non-streaming: append user message, call AI, append assistant reply."""
     result = await chat_service.send_message(
         db, conversation_id, user.id, body.message, context_material_title=body.contextMaterialTitle
     )

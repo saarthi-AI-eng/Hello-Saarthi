@@ -1,9 +1,21 @@
-"""Quiz feature service: quizzes, questions, attempts."""
+"""Quiz feature service: quizzes, questions, attempts, adaptive generation."""
+
+import json
+import logging
+import os
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from saarthi_backend.dao import QuizAttemptDAO, QuizDAO, QuizQuestionDAO
 from saarthi_backend.model import Quiz, QuizAttempt, QuizQuestion
+from saarthi_backend.schema.quiz_schemas import (
+    AdaptiveQuizRequest,
+    AdaptiveQuizResponse,
+    GeneratedQuizQuestion,
+)
+
+logger = logging.getLogger(__name__)
 
 
 async def list_quizzes(
@@ -115,3 +127,124 @@ async def delete_question(
         return False
     await QuizQuestionDAO.delete(db, question_id)
     return True
+
+
+# ─── Adaptive Quiz Generation ─────────────────────────────────────────────────
+
+_QUIZ_GEN_SYSTEM = """You are an expert engineering professor creating adaptive quiz questions.
+Analyze the student's past performance and generate targeted questions.
+
+Return ONLY valid JSON with this structure:
+{
+  "title": "Quiz title",
+  "difficulty": "easy|medium|hard",
+  "weakAreasDetected": ["topic1", "topic2"],
+  "questions": [
+    {
+      "questionText": "...",
+      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+      "correctIndex": 0,
+      "explanation": "Brief explanation of why this answer is correct",
+      "difficulty": "easy|medium|hard",
+      "topic": "specific sub-topic"
+    }
+  ]
+}
+
+Rules:
+- If student scored < 60% previously, generate 60% easy + 40% medium questions
+- If student scored 60-80%, generate 30% easy + 50% medium + 20% hard
+- If student scored > 80% or no history, generate 20% medium + 80% hard
+- Focus extra questions on topics where student got answers wrong
+- Questions must be specific and technically accurate for engineering students
+- Each option must be plausible (no obviously wrong answers)"""
+
+
+async def generate_adaptive_quiz(
+    db: AsyncSession,
+    user_id: int,
+    body: AdaptiveQuizRequest,
+) -> AdaptiveQuizResponse:
+    """Use GPT-4.1 to generate an adaptive quiz based on past attempt analysis."""
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+
+        # Analyze past performance
+        avg_score = 0.0
+        weak_areas: list[str] = []
+        if body.pastAttempts:
+            scores = [a.score for a in body.pastAttempts]
+            avg_score = sum(scores) / len(scores)
+
+        # Determine target difficulty
+        difficulty = body.difficulty or "auto"
+        if difficulty == "auto":
+            if not body.pastAttempts:
+                difficulty = "medium"
+            elif avg_score < 60:
+                difficulty = "easy-medium"
+            elif avg_score < 80:
+                difficulty = "medium"
+            else:
+                difficulty = "hard"
+
+        attempts_text = ""
+        if body.pastAttempts:
+            attempts_text = f"\nPast performance on {body.topic}:\n"
+            for a in body.pastAttempts[-3:]:  # last 3 attempts
+                attempts_text += f"- {a.quizTitle}: {a.score:.0f}%\n"
+            attempts_text += f"Average score: {avg_score:.0f}%\n"
+
+        user_prompt = f"""Generate {body.numQuestions} adaptive quiz questions on: {body.topic}
+{"Course: " + body.courseTitle if body.courseTitle else ""}
+Target difficulty: {difficulty}{attempts_text}
+
+Focus on making questions that test deep understanding, not just memorization.
+For engineering students studying signals, systems, ML, or algorithms."""
+
+        response = await client.chat.completions.create(
+            model="gpt-4.1",
+            messages=[
+                {"role": "system", "content": _QUIZ_GEN_SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            max_tokens=3000,
+            response_format={"type": "json_object"},
+        )
+
+        raw = response.choices[0].message.content or "{}"
+        data = json.loads(raw)
+
+        questions = [
+            GeneratedQuizQuestion(
+                questionText=q["questionText"],
+                options=q.get("options", []),
+                correctIndex=int(q.get("correctIndex", 0)),
+                explanation=q.get("explanation", ""),
+                difficulty=q.get("difficulty", difficulty),
+                topic=q.get("topic", body.topic),
+            )
+            for q in data.get("questions", [])
+        ]
+
+        return AdaptiveQuizResponse(
+            title=data.get("title", f"Adaptive Quiz: {body.topic}"),
+            topic=body.topic,
+            difficulty=difficulty,
+            questions=questions,
+            weakAreasDetected=data.get("weakAreasDetected", weak_areas),
+            generatedAt=datetime.now(timezone.utc).isoformat(),
+        )
+
+    except Exception as e:
+        logger.exception("Adaptive quiz generation failed: %s", e)
+        return AdaptiveQuizResponse(
+            title=f"Quiz: {body.topic}",
+            topic=body.topic,
+            difficulty=body.difficulty or "medium",
+            questions=[],
+            weakAreasDetected=[],
+            generatedAt=datetime.now(timezone.utc).isoformat(),
+        )
