@@ -1,4 +1,4 @@
-"""Chat routes: stateless message, conversation CRUD, send message, SSE stream, study plan."""
+"""Chat routes: stateless message, conversation CRUD, SSE stream, study plan, socratic, concept graph, exam prediction, flashcards."""
 
 from typing import Annotated
 
@@ -12,11 +12,20 @@ from saarthi_backend.schema.chat_schemas import (
     ChatMessageRequest,
     ChatMessageResponse,
     ChatMessageResponseItem,
+    ConceptGraphResponse,
     ConversationDetailResponse,
     ConversationResponse,
     CreateConversationRequest,
+    ExamPredictionRequest,
+    ExamPredictionResponse,
+    FlashcardDeckRequest,
+    FlashcardDeckResponse,
+    FlashcardReviewRequest,
+    FlashcardReviewResponse,
     SendMessageRequest,
     SendMessageResponse,
+    SocraticChallengeRequest,
+    SocraticChallengeResponse,
     StreamMessageRequest,
     StudyPlanRequest,
     StudyPlanResponse,
@@ -218,3 +227,60 @@ async def send_message(
         userMessage=_message_to_item(user_msg),
         assistantMessage=_message_to_item(assistant_msg),
     )
+
+
+# ─── Socratic Challenge Mode ───────────────────────────────────────────────────
+
+@router.post("/socratic", response_model=SocraticChallengeResponse)
+async def socratic_challenge(
+    body: SocraticChallengeRequest,
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """AI challenges the student's claim using the Socratic method to force active recall."""
+    return await chat_service.socratic_challenge(body)
+
+
+# ─── Concept Graph ─────────────────────────────────────────────────────────────
+
+class ConceptGraphRequest(StudyPlanRequest):
+    courseTitle: str = ""
+
+    model_config = {"extra": "ignore"}
+
+
+@router.post("/concept-graph", response_model=ConceptGraphResponse)
+async def concept_graph(
+    body: ConceptGraphRequest,
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Generate a concept dependency graph with mastery levels for a course."""
+    course_title = body.courseTitle or (body.courses[0].title if body.courses else "Engineering Course")
+    return await chat_service.generate_concept_graph(course_title, body.recentQuizScores)
+
+
+# ─── Exam Prediction ───────────────────────────────────────────────────────────
+
+@router.post("/exam-prediction", response_model=ExamPredictionResponse)
+async def exam_prediction(
+    body: ExamPredictionRequest,
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Predict likely exam topics and student readiness for each."""
+    return await chat_service.predict_exam_topics(body)
+
+
+# ─── Flashcards (Spaced Repetition) ───────────────────────────────────────────
+
+@router.post("/flashcards/generate", response_model=FlashcardDeckResponse)
+async def generate_flashcards(
+    body: FlashcardDeckRequest,
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Extract Anki-style flashcards from note/transcript text using GPT-4.1."""
+    return await chat_service.generate_flashcards(body)
+
+
+@router.post("/flashcards/review", response_model=FlashcardReviewResponse)
+async def review_flashcard(body: FlashcardReviewRequest):
+    """Compute SM-2 spaced repetition next interval after a card review."""
+    return chat_service.compute_sm2_review(body)
