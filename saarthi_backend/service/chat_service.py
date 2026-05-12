@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.ai import run_chat
+from saarthi_backend.ai import run_chat, run_document_chat
 from saarthi_backend.dao import ChatMessageDAO, ConversationDAO
 from saarthi_backend.model import ChatMessage, Conversation
 from saarthi_backend.schema.chat_schemas import (
@@ -136,26 +136,33 @@ def _apply_document_context(
     message: str,
     context_material_title: str | None,
     course_id: int | None = None,
-) -> str:
-    """Enrich prompt with real FAISS chunks from the viewed document."""
+) -> tuple[str, bool]:
+    """Enrich prompt with real FAISS chunks from the viewed document.
+
+    Returns (enriched_prompt, is_grounded) where is_grounded=True means
+    the prompt contains actual indexed document excerpts and should be
+    answered with run_document_chat (bypassing LangGraph corpus agents).
+    """
     if not context_material_title or not context_material_title.strip():
-        return message
+        return message, False
     title = context_material_title.strip()
     kb_context = _fetch_faiss_context(message, title, course_id=course_id)
     if kb_context:
-        return (
+        prompt = (
             f'The student is viewing the course document titled "{title}".\n\n'
             f"Here are relevant excerpts extracted directly from that document:\n{kb_context}\n\n"
             f"Answer the student's question using ONLY the excerpts above. "
             f"Do not use outside knowledge unless the excerpts are insufficient, "
             f"and if so, say so explicitly.\n\nQuestion: {message}"
         )
-    # No indexed content found — be honest rather than hallucinate from wrong corpus
-    return (
+        return prompt, True
+    # No indexed content — fall through to general knowledge via LangGraph
+    fallback = (
         f'The student is viewing a document titled "{title}" but its content '
         f"has not been indexed yet. Answer their question using your general knowledge, "
         f"and note that you don't have access to the specific document content.\n\nQuestion: {message}"
     )
+    return fallback, False
 
 
 async def send_message(
@@ -172,9 +179,12 @@ async def send_message(
     existing = await ChatMessageDAO.list_by_conversation(db, conversation_id)
     user_msg = await ChatMessageDAO.create(db, conversation_id, "user", message)
     history = [{"role": m.role, "content": m.content} for m in existing]
-    prompt_for_ai = _apply_document_context(message, context_material_title, course_id=course_id)
+    prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
     history.append({"role": "user", "content": prompt_for_ai})
-    assistant_content = await run_chat(prompt_for_ai, history, mind_mode=False)
+    if is_grounded:
+        assistant_content = await run_document_chat(prompt_for_ai, history[:-1])
+    else:
+        assistant_content = await run_chat(prompt_for_ai, history, mind_mode=False)
     assistant_msg = await ChatMessageDAO.create(db, conversation_id, "assistant", assistant_content)
     if len(existing) == 0:
         title = (message.strip()[:200] + "…") if len(message.strip()) > 200 else message.strip()
@@ -191,7 +201,9 @@ async def stateless_message(
     course_id: int | None = None,
 ) -> str:
     history = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in conversation_history]
-    prompt_for_ai = _apply_document_context(message, context_material_title, course_id=course_id)
+    prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
+    if is_grounded:
+        return await run_document_chat(prompt_for_ai, history)
     history.append({"role": "user", "content": prompt_for_ai})
     return await run_chat(prompt_for_ai, history, mind_mode=mind_mode)
 

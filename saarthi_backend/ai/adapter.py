@@ -76,6 +76,50 @@ async def run_chat(
         return "Something went wrong while generating a response. Please try again."
 
 
+async def run_document_chat(
+    enriched_prompt: str,
+    conversation_history: list[dict],
+) -> str:
+    """Direct OpenAI call for document-grounded Q&A.
+
+    Bypasses the LangGraph pipeline entirely so the agent knowledge bases
+    (HMA corpus) never interfere with course-specific document answers.
+    """
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are Saarthi, a precise AI tutor. "
+                    "The user's prompt contains excerpts extracted from a specific course document. "
+                    "Answer using ONLY those excerpts. "
+                    "Do not draw on any external knowledge or training data. "
+                    "Use Markdown for formatting. Use $...$ for inline math and $$...$$ for display math."
+                ),
+            },
+            *conversation_history[-6:],
+            {"role": "user", "content": enriched_prompt},
+        ]
+        response = await asyncio.wait_for(
+            AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", "")).chat.completions.create(
+                model="gpt-4.1",
+                messages=messages,
+                temperature=0.1,
+                max_tokens=1024,
+            ),
+            timeout=AI_REQUEST_TIMEOUT,
+        )
+        return (response.choices[0].message.content or "").strip()
+    except asyncio.TimeoutError:
+        logger.warning("Document chat timed out")
+        return "The request took too long. Please try a shorter question."
+    except Exception as e:
+        logger.exception("Document chat failed: %s", e)
+        return "Something went wrong while generating a response. Please try again."
+
+
 async def run_chat_stream(
     query: str,
     conversation_history: list[dict],

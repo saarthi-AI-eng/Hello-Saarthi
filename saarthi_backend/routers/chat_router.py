@@ -88,15 +88,27 @@ async def stream_message(
     from saarthi_backend.service.chat_service import _apply_document_context
     from saarthi_backend.dao import ChatMessageDAO, ConversationDAO
 
-    prompt = _apply_document_context(body.message, body.contextMaterialTitle, course_id=body.courseId)
+    prompt, is_grounded = _apply_document_context(body.message, body.contextMaterialTitle, course_id=body.courseId)
 
     async def event_generator():
+        import asyncio
         full_response = []
-        async for chunk in run_chat_stream(prompt, history):
-            yield chunk
-            if chunk.startswith("data: ") and not chunk.startswith("data: ["):
-                token = chunk[6:].rstrip("\n").replace("\\n", "\n")
-                full_response.append(token)
+        from saarthi_backend.ai import run_document_chat
+        if is_grounded:
+            answer = await run_document_chat(prompt, history)
+            words = answer.split(" ")
+            for i, word in enumerate(words):
+                chunk_text = word + (" " if i < len(words) - 1 else "")
+                yield f"data: {chunk_text.replace(chr(10), chr(92) + 'n')}\n\n"
+                full_response.append(chunk_text)
+                await asyncio.sleep(0.012)
+            yield "data: [DONE]\n\n"
+        else:
+            async for chunk in run_chat_stream(prompt, history):
+                yield chunk
+                if chunk.startswith("data: ") and not chunk.startswith("data: ["):
+                    token = chunk[6:].rstrip("\n").replace("\\n", "\n")
+                    full_response.append(token)
 
         # Persist to DB after streaming completes
         try:
