@@ -359,6 +359,20 @@ async def invite_student(
         db, course_id=course_id, invited_by=user.id, email=body.email
     )
     await db.commit()
+
+    # Send invite email after commit — fire-and-forget, never blocks the response
+    if body.email != "*":
+        import asyncio
+        from saarthi_backend.utils.email import send_invite_email
+        asyncio.create_task(
+            send_invite_email(
+                to_email=invite.email,
+                inviter_name=user.full_name or "Your teacher",
+                course_title=course.title,
+                invite_code=invite.invite_code,
+            )
+        )
+
     return InviteResponse(
         inviteCode=invite.invite_code,
         email=invite.email,
