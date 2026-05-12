@@ -24,9 +24,9 @@ class RefreshTokenDAO:
                 RefreshToken.token_hash == token_hash,
                 RefreshToken.revoked.is_(False),
                 RefreshToken.expires_at > datetime.now(timezone.utc),
-            )
+            ).limit(1)
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     @staticmethod
     async def revoke_by_hash(db: AsyncSession, token_hash: str) -> None:

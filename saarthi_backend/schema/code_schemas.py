@@ -1,42 +1,7 @@
 """Code execution schemas."""
 
-from typing import Literal, Optional
+from typing import Optional
 from pydantic import BaseModel, Field
-
-
-SUPPORTED_LANGUAGES = Literal[
-    "python", "javascript", "typescript", "cpp", "c", "java",
-    "rust", "go", "bash", "r", "matlab_octave"
-]
-
-LANGUAGE_VERSIONS = {
-    "python": "3.10.0",
-    "javascript": "18.15.0",
-    "typescript": "5.0.3",
-    "cpp": "10.2.0",
-    "c": "10.2.0",
-    "java": "15.0.2",
-    "rust": "1.68.2",
-    "go": "1.16.2",
-    "bash": "5.2.0",
-    "r": "4.1.1",
-    "matlab_octave": "8.3.0",
-}
-
-# Piston uses these runtime names
-PISTON_LANGUAGE_MAP = {
-    "python": "python",
-    "javascript": "javascript",
-    "typescript": "typescript",
-    "cpp": "c++",
-    "c": "c",
-    "java": "java",
-    "rust": "rust",
-    "go": "go",
-    "bash": "bash",
-    "r": "r",
-    "matlab_octave": "octave",
-}
 
 
 class CodeExecuteRequest(BaseModel):
