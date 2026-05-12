@@ -7,12 +7,16 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select, func
+
 from saarthi_backend.dao import QuizAttemptDAO, QuizDAO, QuizQuestionDAO
 from saarthi_backend.model import Quiz, QuizAttempt, QuizQuestion
 from saarthi_backend.schema.quiz_schemas import (
     AdaptiveQuizRequest,
     AdaptiveQuizResponse,
     GeneratedQuizQuestion,
+    PeerComparisonResponse,
+    ScoreBucket,
 )
 
 logger = logging.getLogger(__name__)
@@ -248,3 +252,95 @@ For engineering students studying signals, systems, ML, or algorithms."""
             weakAreasDetected=[],
             generatedAt=datetime.now(timezone.utc).isoformat(),
         )
+
+
+# ─── Peer Comparison ──────────────────────────────────────────────────────────
+
+async def get_peer_comparison(db: AsyncSession, user_id: int) -> PeerComparisonResponse:
+    """
+    Compute the current user's quiz score percentile against all peers.
+    Fetches all submitted attempts, buckets scores into 10-point ranges,
+    and returns the distribution + user's position.
+    """
+    # All submitted attempts (score not null)
+    all_result = await db.execute(
+        select(QuizAttempt.user_id, QuizAttempt.score, QuizAttempt.quiz_id)
+        .where(QuizAttempt.score.isnot(None))
+    )
+    all_attempts = all_result.fetchall()
+
+    if not all_attempts:
+        return PeerComparisonResponse(
+            userAvgScore=0.0,
+            percentile=0.0,
+            peerCount=0,
+            distribution=[],
+            topicBreakdown=[],
+            generatedAt=datetime.now(timezone.utc).isoformat(),
+        )
+
+    # Per-user average scores
+    user_scores: dict[int, list[float]] = {}
+    for row in all_attempts:
+        user_scores.setdefault(row.user_id, []).append(row.score)
+
+    user_avgs = {uid: sum(scores) / len(scores) for uid, scores in user_scores.items()}
+
+    user_avg = user_avgs.get(user_id, 0.0)
+    peer_count = len(user_avgs)
+
+    # Percentile: what fraction of peers does this user beat
+    beaten = sum(1 for uid, avg in user_avgs.items() if uid != user_id and avg < user_avg)
+    peers_excluding_self = max(peer_count - 1, 1)
+    percentile = round((beaten / peers_excluding_self) * 100, 1)
+
+    # Score distribution bucketed into 10-point ranges
+    buckets: dict[str, int] = {}
+    for i in range(0, 100, 10):
+        buckets[f"{i}-{i+10}"] = 0
+
+    for avg in user_avgs.values():
+        bucket_idx = min(int(avg // 10) * 10, 90)
+        key = f"{bucket_idx}-{bucket_idx + 10}"
+        buckets[key] = buckets.get(key, 0) + 1
+
+    user_bucket_idx = min(int(user_avg // 10) * 10, 90)
+    user_bucket_key = f"{user_bucket_idx}-{user_bucket_idx + 10}"
+
+    distribution = [
+        ScoreBucket(range=k, count=v, isUser=(k == user_bucket_key))
+        for k, v in sorted(buckets.items(), key=lambda x: int(x[0].split("-")[0]))
+    ]
+
+    # Topic breakdown: per-quiz avg for user vs all peers
+    quiz_user: dict[int, list[float]] = {}
+    quiz_all: dict[int, list[float]] = {}
+    for row in all_attempts:
+        quiz_all.setdefault(row.quiz_id, []).append(row.score)
+        if row.user_id == user_id:
+            quiz_user.setdefault(row.quiz_id, []).append(row.score)
+
+    # Fetch quiz titles for the quizzes the user has taken
+    topic_breakdown = []
+    if quiz_user:
+        quiz_ids = list(quiz_user.keys())
+        quiz_result = await db.execute(select(Quiz).where(Quiz.id.in_(quiz_ids)))
+        quizzes = {q.id: q for q in quiz_result.scalars().all()}
+        for qid, user_q_scores in quiz_user.items():
+            quiz = quizzes.get(qid)
+            if not quiz:
+                continue
+            topic_breakdown.append({
+                "topic": quiz.title,
+                "userAvg": round(sum(user_q_scores) / len(user_q_scores), 1),
+                "peerAvg": round(sum(quiz_all[qid]) / len(quiz_all[qid]), 1),
+            })
+
+    return PeerComparisonResponse(
+        userAvgScore=round(user_avg, 1),
+        percentile=percentile,
+        peerCount=peer_count,
+        distribution=distribution,
+        topicBreakdown=topic_breakdown[:6],
+        generatedAt=datetime.now(timezone.utc).isoformat(),
+    )
