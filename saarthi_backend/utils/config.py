@@ -43,13 +43,14 @@ class Settings(BaseSettings):
     # Admin panel — static bearer token protecting /api/admin/* routes
     admin_secret_token: str = ""
 
-    # Email (SMTP) — classroom invites
+    # Email — classroom invites
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "noreply@saarthi.app"
     app_frontend_url: str = "https://saarthi.app"
+    resend_api_key: str = ""
 
     class Config:
         env_file = ".env"
