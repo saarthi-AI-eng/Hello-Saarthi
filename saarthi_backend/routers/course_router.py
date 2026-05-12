@@ -671,6 +671,33 @@ def _safe_file_size_sync(path: Path) -> int | None:
         return None
 
 
+@router.post("/{course_id}/materials/{material_id}/reindex", status_code=202)
+async def reindex_material(
+    course_id: int,
+    material_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Re-trigger background indexing for an existing material (admin/teacher only).
+    Use this for materials that existed before auto-indexing was deployed."""
+    if user.role not in ("admin", "teacher"):
+        raise ForbiddenError("Forbidden.", details=None)
+    material = await course_service.get_material(db, material_id)
+    if not material or material.course_id != course_id:
+        raise NotFoundError("Material not found.", details=None)
+    filename = _uploads_filename_from_url(material.url or "")
+    if not filename:
+        return {"status": "skipped", "reason": "No local file (external URL or link material)"}
+    file_path = _UPLOAD_DIR / filename
+    if not file_path.exists():
+        return {"status": "skipped", "reason": "File not found on disk"}
+    ext = file_path.suffix.lower()
+    if ext not in (".pdf", ".txt"):
+        return {"status": "skipped", "reason": f"File type {ext} not supported for indexing"}
+    index_material_background(file_path, material.title, course_id, material_id)
+    return {"status": "indexing", "material": material.title, "course_id": course_id}
+
+
 @router.delete("/{course_id}/materials/{material_id}", status_code=204)
 async def delete_material(
     course_id: int,

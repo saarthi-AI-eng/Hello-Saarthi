@@ -105,22 +105,25 @@ def _fetch_faiss_context(query: str, material_title: str, course_id: int | None 
                 except Exception:
                     pass
 
-        # ── 2. Global agent indexes (fallback) ────────────────────────────────
-        for agent in _KB_AGENTS:
-            index_path = kb_root / agent / "vector_store"
-            if not index_path.exists():
-                continue
-            try:
-                vs = FAISS.load_local(
-                    str(index_path), embeddings, allow_dangerous_deserialization=True
-                )
-                docs = vs.similarity_search(f"{material_title} {query}", k=3)
-                for d in docs:
-                    src = d.metadata.get("source", "")
-                    if title_lower in src.lower() or not src:
-                        all_chunks.append(d.page_content.strip())
-            except Exception:
-                continue
+        # ── 2. Global agent indexes (only if no course_id — general chat only) ──
+        # When a student is viewing a specific document, never fall back to the
+        # HMA corpus — it causes confident wrong answers from unrelated content.
+        if not course_id:
+            for agent in _KB_AGENTS:
+                index_path = kb_root / agent / "vector_store"
+                if not index_path.exists():
+                    continue
+                try:
+                    vs = FAISS.load_local(
+                        str(index_path), embeddings, allow_dangerous_deserialization=True
+                    )
+                    docs = vs.similarity_search(f"{material_title} {query}", k=3)
+                    for d in docs:
+                        src = d.metadata.get("source", "")
+                        if title_lower in src.lower() or not src:
+                            all_chunks.append(d.page_content.strip())
+                except Exception:
+                    continue
 
         return "\n\n---\n\n".join(all_chunks[:5])
     except Exception:
@@ -139,13 +142,17 @@ def _apply_document_context(
     kb_context = _fetch_faiss_context(message, title, course_id=course_id)
     if kb_context:
         return (
-            f'The user is studying the document "{title}".\n\n'
-            f"Relevant excerpts from the document:\n{kb_context}\n\n"
-            f"Using those excerpts as grounding, answer the student's question:\n{message}"
+            f'The student is viewing the course document titled "{title}".\n\n'
+            f"Here are relevant excerpts extracted directly from that document:\n{kb_context}\n\n"
+            f"Answer the student's question using ONLY the excerpts above. "
+            f"Do not use outside knowledge unless the excerpts are insufficient, "
+            f"and if so, say so explicitly.\n\nQuestion: {message}"
         )
+    # No indexed content found — be honest rather than hallucinate from wrong corpus
     return (
-        f'The user is currently viewing the document "{title}". '
-        f"Answer their question in that context when relevant.\n\nQuestion: {message}"
+        f'The student is viewing a document titled "{title}" but its content '
+        f"has not been indexed yet. Answer their question using your general knowledge, "
+        f"and note that you don't have access to the specific document content.\n\nQuestion: {message}"
     )
 
 
