@@ -44,11 +44,25 @@ def _extract_answer(final_state: dict) -> str:
     mind_res = results.get("mind_agent")
     if mind_res is not None and hasattr(mind_res, "content"):
         return (mind_res.content or "").strip()
-    # Single-expert path: first available expert result
-    for key in ("notes_agent", "books_agent", "calculator_agent", "saarthi_agent", "video_agent"):
+    # Single or multi-expert path — collect all agent results in priority order
+    for key in (
+        "notes_agent", "books_agent", "calculator_agent",
+        "saarthi_agent", "video_agent", "data_analysis_agent",
+    ):
         res = results.get(key)
         if res is not None and hasattr(res, "content"):
-            return (res.content or "").strip()
+            content = (res.content or "").strip()
+            if content:
+                return content
+    # Multi-agent: concatenate all results that have content
+    parts = []
+    for key, res in results.items():
+        if key.endswith("_trace") or key == "execution_plan":
+            continue
+        if hasattr(res, "content") and (res.content or "").strip():
+            parts.append(f"**{key}:**\n{res.content.strip()}")
+    if parts:
+        return "\n\n".join(parts)
     return "I couldn't generate a response. Please try again."
 
 

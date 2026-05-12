@@ -1,10 +1,12 @@
-"""Single API router: 8 domains only (auth, user, chat, course, video, quiz, note, notification)."""
+"""Single API router: auth, user, chat, course, video, quiz, note, notification, data, admin."""
 
 from fastapi import APIRouter
 
+from saarthi_backend.routers.admin_router import router as admin_router
 from saarthi_backend.routers.auth_router import router as auth_router
 from saarthi_backend.routers.chat_router import router as chat_router
 from saarthi_backend.routers.course_router import router as course_router
+from saarthi_backend.routers.data_router import router as data_router
 from saarthi_backend.routers.note_router import router as note_router
 from saarthi_backend.routers.notification_router import router as notification_router
 from saarthi_backend.routers.quiz_router import router as quiz_router
@@ -21,3 +23,5 @@ api_router.include_router(video_router)
 api_router.include_router(quiz_router)
 api_router.include_router(note_router)
 api_router.include_router(notification_router)
+api_router.include_router(data_router)
+api_router.include_router(admin_router)
