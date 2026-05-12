@@ -95,9 +95,11 @@ def _fetch_faiss_context(query: str, material_title: str, course_id: int | None 
                     )
                     docs = vs.similarity_search(f"{material_title} {query}", k=5)
                     for d in docs:
-                        src = d.metadata.get("source", "")
-                        # Prefer chunks from this exact material; include all if no source tag
-                        if not src or title_lower in src.lower():
+                        src = d.metadata.get("source", "").lower()
+                        # Normalise both to underscores for comparison
+                        src_norm = src.replace(" ", "_")
+                        title_norm = title_lower.replace(" ", "_")
+                        if not src or title_norm in src_norm:
                             all_chunks.append(d.page_content.strip())
                     # If we found course-specific chunks, return immediately — no need to fall back
                     if all_chunks:
