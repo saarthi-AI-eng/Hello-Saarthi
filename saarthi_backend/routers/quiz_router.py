@@ -11,6 +11,7 @@ from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationP
 from saarthi_backend.schema.quiz_schemas import (
     AdaptiveQuizRequest,
     AdaptiveQuizResponse,
+    PeerComparisonResponse,
     QuizAttemptResponse,
     QuizAttemptSubmitRequest,
     QuizDetailResponse,
@@ -240,3 +241,14 @@ async def generate_adaptive_quiz(
     """
     result = await quiz_service.generate_adaptive_quiz(db, user.id, body)
     return result
+
+
+# ─── Peer Comparison ──────────────────────────────────────────────────────────
+
+@router.get("/peer-comparison", response_model=PeerComparisonResponse)
+async def peer_comparison(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return the current user's score percentile against all peers."""
+    return await quiz_service.get_peer_comparison(db, user.id)

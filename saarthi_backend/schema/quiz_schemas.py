@@ -96,3 +96,20 @@ class AdaptiveQuizResponse(BaseModel):
     questions: List[GeneratedQuizQuestion]
     weakAreasDetected: List[str]
     generatedAt: str
+
+
+# ─── Peer Comparison ──────────────────────────────────────────────────────────
+
+class ScoreBucket(BaseModel):
+    range: str        # e.g. "80-90"
+    count: int        # number of peers in this bucket
+    isUser: bool      # True for the bucket containing the current user
+
+
+class PeerComparisonResponse(BaseModel):
+    userAvgScore: float
+    percentile: float          # 0-100: what % of peers the user outperforms
+    peerCount: int             # total peers who have taken at least one quiz
+    distribution: List[ScoreBucket]
+    topicBreakdown: List[dict]  # [{topic, userAvg, peerAvg}]
+    generatedAt: str
