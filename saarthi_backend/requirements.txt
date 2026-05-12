@@ -23,3 +23,4 @@ langchain-text-splitters>=0.3.0
 docling>=2.0.0
 numexpr>=2.8.0
 openai>=1.0.0
+pypdf>=4.0.0
