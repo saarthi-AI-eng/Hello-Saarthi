@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     # Comma-separated list; include Vite (5173) and CRA (3000) for local dev
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
 
+    # Supabase — used by KB sync and data store
+    supabase_url: str = ""
+    supabase_key: str = ""
+    supabase_service_key: str = ""
+
+    # Admin panel — static bearer token protecting /api/admin/* routes
+    admin_secret_token: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

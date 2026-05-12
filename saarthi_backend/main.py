@@ -102,6 +102,17 @@ async def lifespan(app: FastAPI):
     app.state.db_session_factory = session_factory
     async with session_factory() as session:
         await seed_demo_users(session)
+
+    # Sync FAISS knowledge-base indexes from Supabase Storage on startup.
+    # If local indexes already exist they are used as-is (no download).
+    # If Supabase is not configured this is a silent no-op.
+    try:
+        from src.tools.kb_ops_supabase import sync_all_on_startup
+        kb_status = sync_all_on_startup()
+        logger.info("KB startup sync: %s", kb_status)
+    except Exception as _kb_err:
+        logger.warning("KB startup sync skipped: %s", _kb_err)
+
     logger.info("Saarthi backend started: PostgreSQL ready, AI in-process (src/ graph)")
     yield
     await engine.dispose()
