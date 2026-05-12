@@ -229,24 +229,43 @@ async def explain_error(body: CodeExplainRequest) -> CodeExplainResponse:
 
 # ── SSE streaming explanation ─────────────────────────────────────────────────
 
-_EXPLAIN_STREAM_SYSTEM = """You are a programming tutor. A student's code failed.
-Explain what went wrong in clear, friendly plain English. Be specific about the error.
-Then give 2-3 concrete fixes. Keep it under 150 words total. No code blocks."""
+_EXPLAIN_STREAM_SYSTEM = """You are an expert programming tutor for engineering students.
+
+If the code FAILED (exit code != 0 or stderr present):
+- Explain what went wrong in clear, friendly plain English
+- Be specific about the error message and line
+- Give 2-3 concrete fixes
+- Keep it under 150 words. No code blocks.
+
+If the code SUCCEEDED (exit code 0, no errors):
+- Give a brief insight about what the code does and what the output means
+- Point out anything interesting, efficient, or worth improving
+- Keep it under 120 words. Be encouraging but precise. No code blocks."""
 
 
 async def stream_explain_error(body: CodeExplainRequest) -> AsyncGenerator[str, None]:
-    """Stream the AI error explanation token-by-token via SSE."""
+    """Stream the AI explanation/insight token-by-token via SSE."""
     try:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
         context_line = f" (course: {body.courseContext})" if body.courseContext else ""
-        user_prompt = (
-            f"Language: {body.language}{context_line}\n"
-            f"Exit code: {body.exitCode}\n"
-            f"Error:\n{body.stderr[:800]}\n\n"
-            f"Code snippet:\n{body.code[:1500]}"
-        )
+        is_success = body.exitCode == 0 and not body.stderr
+
+        if is_success:
+            user_prompt = (
+                f"Language: {body.language}{context_line}\n"
+                f"The code ran successfully.\n\n"
+                f"Output:\n{(body.stdout or '')[:600]}\n\n"
+                f"Code:\n{body.code[:1500]}"
+            )
+        else:
+            user_prompt = (
+                f"Language: {body.language}{context_line}\n"
+                f"Exit code: {body.exitCode}\n"
+                f"Error:\n{body.stderr[:800]}\n\n"
+                f"Code snippet:\n{body.code[:1500]}"
+            )
 
         stream = await client.chat.completions.create(
             model="gpt-4.1",
