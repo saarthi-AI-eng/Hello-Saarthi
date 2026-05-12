@@ -35,19 +35,31 @@ async def get_applied_versions(conn):
 
 
 def _split_statements(sql: str) -> list[str]:
-    """Split SQL into single statements (asyncpg allows only one per execute)."""
+    """Split SQL into single statements, correctly handling dollar-quoted blocks (DO $$ ... $$;)."""
     statements = []
     current: list[str] = []
+    in_dollar_quote = False
+
     for line in sql.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("--"):
             continue
+
+        # Track entering/exiting dollar-quote blocks
+        if "$$" in stripped:
+            count = stripped.count("$$")
+            if count % 2 != 0:
+                in_dollar_quote = not in_dollar_quote
+
         current.append(line)
-        if stripped.endswith(";"):
+
+        # Only split on ; when not inside a dollar-quoted block
+        if not in_dollar_quote and stripped.endswith(";"):
             stmt = "\n".join(current).strip()
             if stmt:
                 statements.append(stmt)
             current = []
+
     if current:
         stmt = "\n".join(current).strip()
         if stmt:
