@@ -22,6 +22,11 @@ from saarthi_backend.schema.course_schemas import (
     CourseResponse,
     EnrollmentResponse,
     EnrollmentWithCourseResponse,
+    InviteListItem,
+    InviteRequest,
+    InviteResponse,
+    JoinRequest,
+    JoinResponse,
     MaterialCreate,
     MaterialResponse,
     MaterialUpdate,
@@ -174,11 +179,15 @@ async def search(
 # ----- Courses -----
 @router.get("", response_model=PaginatedResponse[CourseResponse])
 async def list_courses(
+    user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
-    """List all courses (paginated)."""
-    courses, total = await course_service.list_courses(db, limit=pagination.limit, offset=pagination.offset)
+    """List courses. Students see only enrolled courses; teachers/admins see all."""
+    if user.role in ("admin", "teacher"):
+        courses, total = await course_service.list_courses(db, limit=pagination.limit, offset=pagination.offset)
+    else:
+        courses, total = await course_service.list_enrolled_courses(db, user.id, limit=pagination.limit, offset=pagination.offset)
     return PaginatedResponse(
         items=[_course_to_response(c) for c in courses],
         total=total,
@@ -276,6 +285,7 @@ async def create_course(
         description=body.description,
         thumbnail_emoji=body.thumbnailEmoji,
         color=body.color,
+        owner_id=user.id,
     )
     await db.commit()
     return _course_to_response(course)
@@ -304,7 +314,12 @@ async def enroll(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Enroll current user in course."""
+    """Enroll in a course. Students must use an invite code (POST /courses/join). Teachers/admins can enroll directly."""
+    if user.role == "student":
+        raise ForbiddenError(
+            "Students must join a course via an invite link. Ask your teacher for an invite.",
+            details=None,
+        )
     course = await course_service.get_course(db, course_id)
     if not course:
         raise NotFoundError("Course not found.", details=None)
@@ -323,6 +338,83 @@ async def enroll(
         courseId=str(enrollment.course_id),
         progressPercent=enrollment.progress_percent,
         lastAccessedAt=enrollment.last_accessed_at.isoformat() if enrollment.last_accessed_at else None,
+    )
+
+
+# ----- Classroom invites -----
+@router.post("/{course_id}/invite", response_model=InviteResponse, status_code=status.HTTP_201_CREATED)
+async def invite_student(
+    course_id: int,
+    body: InviteRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Send an invite for a student to join this course (teacher/admin only)."""
+    if user.role not in ("admin", "teacher"):
+        raise ForbiddenError("Only teachers and admins can send invites.", details=None)
+    course = await course_service.get_course(db, course_id)
+    if not course:
+        raise NotFoundError("Course not found.", details=None)
+    invite = await course_service.create_invite(
+        db, course_id=course_id, invited_by=user.id, email=body.email
+    )
+    await db.commit()
+    return InviteResponse(
+        inviteCode=invite.invite_code,
+        email=invite.email,
+        courseId=str(invite.course_id),
+        expiresAt=invite.expires_at.isoformat(),
+        inviteLink=f"/courses/join?code={invite.invite_code}",
+    )
+
+
+@router.get("/{course_id}/invites", response_model=list[InviteListItem])
+async def list_invites(
+    course_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """List all invites for this course (teacher/admin only)."""
+    if user.role not in ("admin", "teacher"):
+        raise ForbiddenError("Only teachers and admins can view invites.", details=None)
+    course = await course_service.get_course(db, course_id)
+    if not course:
+        raise NotFoundError("Course not found.", details=None)
+    invites = await course_service.list_course_invites(db, course_id)
+    return [
+        InviteListItem(
+            id=str(i.id),
+            email=i.email,
+            inviteCode=i.invite_code,
+            accepted=i.accepted,
+            expiresAt=i.expires_at.isoformat(),
+            createdAt=i.created_at.isoformat() if i.created_at else "",
+        )
+        for i in invites
+    ]
+
+
+@router.post("/join", response_model=JoinResponse, status_code=status.HTTP_200_OK)
+async def join_course(
+    body: JoinRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Join a course using an invite code (students)."""
+    result = await course_service.join_by_invite_code(
+        db, user_id=user.id, user_email=user.email, invite_code=body.inviteCode
+    )
+    if result is None:
+        raise ValidationError(
+            "Invalid or expired invite code. Ask your teacher for a new link.",
+            details=None,
+        )
+    _, course = result
+    await db.commit()
+    return JoinResponse(
+        courseId=str(course.id),
+        courseTitle=course.title,
+        message=f"You have successfully joined {course.title}!",
     )
 
 

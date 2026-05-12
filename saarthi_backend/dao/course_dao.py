@@ -1,11 +1,14 @@
 """DAO for courses, enrollments, assignments, materials, stream. Includes search (courses, materials, videos)."""
 
+from datetime import datetime
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from saarthi_backend.model import (
     Assignment,
     AssignmentSubmission,
+    ClassroomInvite,
     Course,
     Enrollment,
     Material,
@@ -63,6 +66,7 @@ class CourseDAO:
         description: str | None = None,
         thumbnail_emoji: str | None = None,
         color: str | None = None,
+        owner_id: int | None = None,
     ) -> Course:
         c = Course(
             title=title,
@@ -71,6 +75,7 @@ class CourseDAO:
             description=description,
             thumbnail_emoji=thumbnail_emoji,
             color=color,
+            owner_id=owner_id,
         )
         db.add(c)
         await db.flush()
@@ -533,3 +538,92 @@ async def search(
         total_materials,
         total_videos,
     )
+
+
+# ----- Scoped course listing for students -----
+
+async def list_courses_for_student(
+    db: AsyncSession, user_id: int, limit: int = 100, offset: int = 0
+) -> tuple[list[Course], int]:
+    """Return only courses the student is enrolled in."""
+    enrolled_subq = select(Enrollment.course_id).where(Enrollment.user_id == user_id)
+    result = await db.execute(
+        select(Course)
+        .where(Course.id.in_(enrolled_subq))
+        .order_by(Course.id)
+        .limit(limit)
+        .offset(offset)
+    )
+    count_result = await db.execute(
+        select(func.count()).select_from(Course).where(Course.id.in_(enrolled_subq))
+    )
+    return list(result.scalars().all()), count_result.scalar_one()
+
+
+# ----- ClassroomInvite -----
+
+class ClassroomInviteDAO:
+    @staticmethod
+    async def create(
+        db: AsyncSession,
+        course_id: int,
+        invited_by: int,
+        email: str,
+        invite_code: str,
+        expires_at: datetime,
+    ) -> ClassroomInvite:
+        invite = ClassroomInvite(
+            course_id=course_id,
+            invited_by=invited_by,
+            email=email,
+            invite_code=invite_code,
+            expires_at=expires_at,
+        )
+        db.add(invite)
+        await db.flush()
+        return invite
+
+    @staticmethod
+    async def get_by_code(db: AsyncSession, invite_code: str) -> ClassroomInvite | None:
+        result = await db.execute(
+            select(ClassroomInvite).where(ClassroomInvite.invite_code == invite_code)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_email_and_course(
+        db: AsyncSession, email: str, course_id: int
+    ) -> ClassroomInvite | None:
+        result = await db.execute(
+            select(ClassroomInvite).where(
+                ClassroomInvite.email == email,
+                ClassroomInvite.course_id == course_id,
+                ClassroomInvite.accepted == False,  # noqa: E712
+            )
+            .order_by(ClassroomInvite.created_at.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
+
+    @staticmethod
+    async def mark_accepted(db: AsyncSession, invite_id: int) -> None:
+        result = await db.execute(
+            select(ClassroomInvite).where(ClassroomInvite.id == invite_id)
+        )
+        invite = result.scalar_one_or_none()
+        if invite:
+            invite.accepted = True
+            await db.flush()
+
+    @staticmethod
+    async def list_by_course(
+        db: AsyncSession, course_id: int, limit: int = 200, offset: int = 0
+    ) -> list[ClassroomInvite]:
+        result = await db.execute(
+            select(ClassroomInvite)
+            .where(ClassroomInvite.course_id == course_id)
+            .order_by(ClassroomInvite.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(result.scalars().all())

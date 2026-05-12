@@ -5,10 +5,12 @@ from .chat_dao import ConversationDAO, ChatMessageDAO
 from .course_dao import (
     AssignmentDAO,
     AssignmentSubmissionDAO,
+    ClassroomInviteDAO,
     CourseDAO,
     EnrollmentDAO,
     MaterialDAO,
     StreamItemDAO,
+    list_courses_for_student,
 )
 from .video_dao import VideoDAO, VideoProgressDAO, VideoNoteDAO
 from .quiz_dao import QuizDAO, QuizQuestionDAO, QuizAttemptDAO
@@ -24,8 +26,10 @@ __all__ = [
     "EnrollmentDAO",
     "AssignmentDAO",
     "AssignmentSubmissionDAO",
+    "ClassroomInviteDAO",
     "MaterialDAO",
     "StreamItemDAO",
+    "list_courses_for_student",
     "VideoDAO",
     "VideoProgressDAO",
     "VideoNoteDAO",

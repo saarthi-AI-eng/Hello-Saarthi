@@ -1,7 +1,7 @@
 # Models package
 from .context_model import Base
 from .user_model import RefreshToken, User
-from .course_model import Course, Enrollment, Assignment, AssignmentSubmission, Material, StreamItem
+from .course_model import Course, Enrollment, Assignment, AssignmentSubmission, Material, StreamItem, ClassroomInvite
 from .video_model import Video, VideoProgress, VideoNote
 from .quiz_model import Quiz, QuizQuestion, QuizAttempt
 from .note_model import Note
@@ -20,6 +20,7 @@ __all__ = [
     "AssignmentSubmission",
     "Material",
     "StreamItem",
+    "ClassroomInvite",
     "Video",
     "VideoProgress",
     "VideoNote",

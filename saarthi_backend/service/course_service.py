@@ -1,10 +1,15 @@
 """Course feature service: courses, enrollments, assignments, materials, stream, search, upload (no dedicated modules)."""
 
+import secrets
+import string
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from saarthi_backend.dao import (
     AssignmentDAO,
     AssignmentSubmissionDAO,
+    ClassroomInviteDAO,
     CourseDAO,
     EnrollmentDAO,
     MaterialDAO,
@@ -15,6 +20,7 @@ from saarthi_backend.dao.notification_dao import NotificationDAO
 from saarthi_backend.model import (
     Assignment,
     AssignmentSubmission,
+    ClassroomInvite,
     Course,
     Enrollment,
     Material,
@@ -44,6 +50,7 @@ async def create_course(
     description: str | None = None,
     thumbnail_emoji: str | None = None,
     color: str | None = None,
+    owner_id: int | None = None,
 ) -> Course:
     return await CourseDAO.create(
         db,
@@ -53,6 +60,7 @@ async def create_course(
         description=description,
         thumbnail_emoji=thumbnail_emoji,
         color=color,
+        owner_id=owner_id,
     )
 
 
@@ -271,3 +279,81 @@ async def search(
 ) -> tuple[list, list, list, int, int, int]:
     """Search courses, materials, videos. Returns (courses, materials, videos, total_courses, total_materials, total_videos)."""
     return await course_dao_search(db, q, limit_per_type, offset_per_type)
+
+
+# ----- Scoped course listing -----
+
+async def list_enrolled_courses(
+    db: AsyncSession, user_id: int, limit: int = 100, offset: int = 0
+) -> tuple[list[Course], int]:
+    """Return only courses the student is enrolled in."""
+    from saarthi_backend.dao.course_dao import list_courses_for_student as _dao_fn
+    return await _dao_fn(db, user_id, limit=limit, offset=offset)
+
+
+# ----- Classroom invites -----
+
+_INVITE_CHARS = string.ascii_letters + string.digits
+
+
+def _generate_invite_code(length: int = 10) -> str:
+    return "".join(secrets.choice(_INVITE_CHARS) for _ in range(length))
+
+
+async def create_invite(
+    db: AsyncSession,
+    course_id: int,
+    invited_by: int,
+    email: str,
+    expires_in_hours: int = 72,
+) -> ClassroomInvite:
+    invite_code = _generate_invite_code()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+    invite = await ClassroomInviteDAO.create(
+        db,
+        course_id=course_id,
+        invited_by=invited_by,
+        email=email.lower().strip(),
+        invite_code=invite_code,
+        expires_at=expires_at,
+    )
+    return invite
+
+
+async def get_invite_by_code(db: AsyncSession, invite_code: str) -> ClassroomInvite | None:
+    return await ClassroomInviteDAO.get_by_code(db, invite_code)
+
+
+async def join_by_invite_code(
+    db: AsyncSession, user_id: int, user_email: str, invite_code: str
+) -> tuple[Enrollment, Course] | None:
+    """Accept an invite and enroll the user. Returns (enrollment, course) or None if invalid."""
+    invite = await ClassroomInviteDAO.get_by_code(db, invite_code)
+    if not invite:
+        return None
+    if invite.accepted:
+        return None
+    if invite.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        return None
+    # Invite is either addressed to this user's email or is a general open code (email="*")
+    if invite.email != "*" and invite.email != user_email.lower().strip():
+        return None
+
+    course = await CourseDAO.get_by_id(db, invite.course_id)
+    if not course:
+        return None
+
+    existing = await EnrollmentDAO.get(db, user_id, invite.course_id)
+    if existing:
+        await ClassroomInviteDAO.mark_accepted(db, invite.id)
+        return existing, course
+
+    enrollment = await EnrollmentDAO.create(db, user_id, invite.course_id)
+    await ClassroomInviteDAO.mark_accepted(db, invite.id)
+    return enrollment, course
+
+
+async def list_course_invites(
+    db: AsyncSession, course_id: int
+) -> list[ClassroomInvite]:
+    return await ClassroomInviteDAO.list_by_course(db, course_id)

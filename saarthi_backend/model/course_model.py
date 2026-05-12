@@ -1,8 +1,8 @@
-"""Course-related models: Course, Enrollment, Assignment, Material, Stream."""
+"""Course-related models: Course, Enrollment, Assignment, Material, Stream, ClassroomInvite."""
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from saarthi_backend.model.context_model import Base
@@ -20,6 +20,10 @@ class Course(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     thumbnail_emoji: Mapped[str | None] = mapped_column(String(16), nullable=True)
     color: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # owner_id links course to the teacher/admin who created it
+    owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey("saarthi_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -93,4 +97,23 @@ class StreamItem(Base):
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     author: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ClassroomInvite(Base):
+    """Email-based invite code that lets a student join a course (like Google Classroom)."""
+
+    __tablename__ = "saarthi_classroom_invites"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("saarthi_courses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    invited_by: Mapped[int] = mapped_column(
+        ForeignKey("saarthi_users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    invite_code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    accepted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

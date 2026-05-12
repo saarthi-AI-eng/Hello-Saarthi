@@ -145,6 +145,38 @@ class CoursePersonResponse(BaseModel):
     progressPercent: float
 
 
+# ----- Classroom invites -----
+class InviteRequest(BaseModel):
+    email: str = Field(..., description="Email address to invite. Use '*' for an open link anyone can join.")
+
+
+class InviteResponse(BaseModel):
+    inviteCode: str
+    email: str
+    courseId: str
+    expiresAt: str
+    inviteLink: str
+
+
+class JoinRequest(BaseModel):
+    inviteCode: str = Field(..., min_length=1)
+
+
+class JoinResponse(BaseModel):
+    courseId: str
+    courseTitle: str
+    message: str
+
+
+class InviteListItem(BaseModel):
+    id: str
+    email: str
+    inviteCode: str
+    accepted: bool
+    expiresAt: str
+    createdAt: str
+
+
 # ----- Search (no dedicated search_schemas; under course domain) -----
 class SearchItem(BaseModel):
     type: str
