@@ -26,6 +26,7 @@ class CodeExplainRequest(BaseModel):
     language: str
     stderr: str
     exitCode: int
+    stdout: Optional[str] = None
     courseContext: Optional[str] = None
 
 
