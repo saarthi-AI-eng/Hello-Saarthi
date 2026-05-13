@@ -17,6 +17,10 @@ from langchain_core.documents import Document
 KB_STATUS_FILE = "kb_status.json"
 EMBEDDING_MODEL = "text-embedding-3-large"
 
+# TTL cache so check_and_update_kb_index doesn't do file I/O on every request
+_KB_CHECK_CACHE: dict[str, float] = {}
+_KB_CHECK_TTL = 60.0  # seconds
+
 def load_pdf_with_docling(file_path: str) -> List[Document]:
     """
     Loads a PDF using Docling, which handles OCR and layout analysis.
@@ -131,7 +135,13 @@ def ingest_documents(expert_name: str) -> bool:
 def check_and_update_kb_index(expert_name: str) -> bool:
     """
     Checks modification times and re-indexes if necessary.
+    Skips the file I/O check if called within the last 60 seconds.
     """
+    now = time.time()
+    if now - _KB_CHECK_CACHE.get(expert_name, 0.0) < _KB_CHECK_TTL:
+        return False
+    _KB_CHECK_CACHE[expert_name] = now
+
     kb_path = get_kb_path(expert_name)
     if not kb_path.exists():
         return False
@@ -190,4 +200,6 @@ def get_expert_description(expert_name: str) -> str:
         return "Video Agent: Specialized in answering questions from video lecture transcripts on signals and systems. Use this when the user asks about lecture content, concepts explained in video lectures, or video-based tutorials."
     if "data_analysis_agent" in expert_name:
         return "Data Analysis Agent: Specialized in analyzing uploaded CSV datasets using pandas and numpy. Use this when the user asks to analyze data, explore a dataset, compute statistics, filter rows, find correlations, or any data-related query. Also use this when the user mentions 'data', 'CSV', 'dataset', 'analyze', 'plot', 'statistics', 'columns', or 'rows'."
+    if "web_agent" in expert_name:
+        return "Web Agent: Searches the internet for up-to-date information. Use this ONLY when the topic is clearly outside the course materials — e.g., current events, general programming questions, or topics the other agents could not answer. Prefer course-specific agents first."
     return "General Assistant"

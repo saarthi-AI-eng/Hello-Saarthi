@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.ai import run_chat
+from saarthi_backend.ai import run_chat, run_document_chat
 from saarthi_backend.dao import ChatMessageDAO, ConversationDAO
 from saarthi_backend.model import ChatMessage, Conversation
 from saarthi_backend.schema.chat_schemas import (
@@ -68,61 +68,101 @@ async def delete_conversation(db: AsyncSession, conversation_id: int, user_id: i
 _KB_AGENTS = ["books_agent", "notes_agent", "video_agent"]
 
 
-def _fetch_faiss_context(query: str, material_title: str) -> str:
-    """Search all FAISS indexes for chunks relevant to the query + material title."""
+def _fetch_faiss_context(query: str, material_title: str, course_id: int | None = None) -> str:
+    """Search FAISS indexes for chunks relevant to the query + material title.
+
+    Priority:
+    1. Per-course index (knowledge_base/courses/<course_id>/vector_store) — exact material match
+    2. Global agent indexes — fallback to HMA corpus
+    """
     try:
         from pathlib import Path
         from langchain_community.vectorstores import FAISS
         from langchain_openai import OpenAIEmbeddings
 
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
         kb_root = Path("knowledge_base")
         all_chunks: list[str] = []
+        title_lower = material_title.lower()
 
-        for agent in _KB_AGENTS:
-            index_path = kb_root / agent / "vector_store"
-            if not index_path.exists():
-                continue
-            try:
-                vs = FAISS.load_local(
-                    str(index_path), embeddings, allow_dangerous_deserialization=True
-                )
-                # Search with both the question and the material title for better recall
-                docs = vs.similarity_search(f"{material_title} {query}", k=3)
-                for d in docs:
-                    src = d.metadata.get("source", "")
-                    title_lower = material_title.lower()
-                    # Only include chunks that plausibly belong to this material
-                    if title_lower in src.lower() or not src:
-                        all_chunks.append(d.page_content.strip())
-                    else:
-                        # Include anyway if no source info — better to over-include
-                        if not src:
+        # ── 1. Per-course index (highest priority) ────────────────────────────
+        if course_id:
+            course_index = kb_root / "courses" / str(course_id) / "vector_store"
+            if course_index.exists():
+                try:
+                    vs = FAISS.load_local(
+                        str(course_index), embeddings, allow_dangerous_deserialization=True
+                    )
+                    docs = vs.similarity_search(f"{material_title} {query}", k=5)
+                    for d in docs:
+                        src = d.metadata.get("source", "").lower()
+                        # Normalise both to underscores for comparison
+                        src_norm = src.replace(" ", "_")
+                        title_norm = title_lower.replace(" ", "_")
+                        if not src or title_norm in src_norm:
                             all_chunks.append(d.page_content.strip())
-            except Exception:
-                continue
+                    # If we found course-specific chunks, return immediately — no need to fall back
+                    if all_chunks:
+                        return "\n\n---\n\n".join(all_chunks[:6])
+                except Exception:
+                    pass
 
-        return "\n\n---\n\n".join(all_chunks[:5])  # top 5 chunks across all agents
+        # ── 2. Global agent indexes (only if no course_id — general chat only) ──
+        # When a student is viewing a specific document, never fall back to the
+        # HMA corpus — it causes confident wrong answers from unrelated content.
+        if not course_id:
+            for agent in _KB_AGENTS:
+                index_path = kb_root / agent / "vector_store"
+                if not index_path.exists():
+                    continue
+                try:
+                    vs = FAISS.load_local(
+                        str(index_path), embeddings, allow_dangerous_deserialization=True
+                    )
+                    docs = vs.similarity_search(f"{material_title} {query}", k=3)
+                    for d in docs:
+                        src = d.metadata.get("source", "")
+                        if title_lower in src.lower() or not src:
+                            all_chunks.append(d.page_content.strip())
+                except Exception:
+                    continue
+
+        return "\n\n---\n\n".join(all_chunks[:5])
     except Exception:
         return ""
 
 
-def _apply_document_context(message: str, context_material_title: str | None) -> str:
-    """Enrich prompt with real FAISS chunks from the viewed document."""
+def _apply_document_context(
+    message: str,
+    context_material_title: str | None,
+    course_id: int | None = None,
+) -> tuple[str, bool]:
+    """Enrich prompt with real FAISS chunks from the viewed document.
+
+    Returns (enriched_prompt, is_grounded) where is_grounded=True means
+    the prompt contains actual indexed document excerpts and should be
+    answered with run_document_chat (bypassing LangGraph corpus agents).
+    """
     if not context_material_title or not context_material_title.strip():
-        return message
+        return message, False
     title = context_material_title.strip()
-    kb_context = _fetch_faiss_context(message, title)
+    kb_context = _fetch_faiss_context(message, title, course_id=course_id)
     if kb_context:
-        return (
-            f'The user is studying the document "{title}".\n\n'
-            f"Relevant excerpts from the knowledge base:\n{kb_context}\n\n"
-            f"Using those excerpts as grounding, answer the student's question:\n{message}"
+        prompt = (
+            f'The student is viewing the course document titled "{title}".\n\n'
+            f"Here are relevant excerpts extracted directly from that document:\n{kb_context}\n\n"
+            f"Answer the student's question using ONLY the excerpts above. "
+            f"Do not use outside knowledge unless the excerpts are insufficient, "
+            f"and if so, say so explicitly.\n\nQuestion: {message}"
         )
-    return (
-        f'The user is currently viewing the document "{title}". '
-        f"Answer their question in that context when relevant.\n\nQuestion: {message}"
+        return prompt, True
+    # No indexed content — fall through to general knowledge via LangGraph
+    fallback = (
+        f'The student is viewing a document titled "{title}" but its content '
+        f"has not been indexed yet. Answer their question using your general knowledge, "
+        f"and note that you don't have access to the specific document content.\n\nQuestion: {message}"
     )
+    return fallback, False
 
 
 async def send_message(
@@ -131,6 +171,7 @@ async def send_message(
     user_id: int,
     message: str,
     context_material_title: str | None = None,
+    course_id: int | None = None,
 ) -> tuple[ChatMessage, ChatMessage] | None:
     conv = await ConversationDAO.get_by_id(db, conversation_id, user_id)
     if not conv:
@@ -138,9 +179,12 @@ async def send_message(
     existing = await ChatMessageDAO.list_by_conversation(db, conversation_id)
     user_msg = await ChatMessageDAO.create(db, conversation_id, "user", message)
     history = [{"role": m.role, "content": m.content} for m in existing]
-    prompt_for_ai = _apply_document_context(message, context_material_title)
+    prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
     history.append({"role": "user", "content": prompt_for_ai})
-    assistant_content = await run_chat(prompt_for_ai, history, mind_mode=False)
+    if is_grounded:
+        assistant_content = await run_document_chat(prompt_for_ai, history[:-1])
+    else:
+        assistant_content = await run_chat(prompt_for_ai, history, mind_mode=False)
     assistant_msg = await ChatMessageDAO.create(db, conversation_id, "assistant", assistant_content)
     if len(existing) == 0:
         title = (message.strip()[:200] + "…") if len(message.strip()) > 200 else message.strip()
@@ -154,9 +198,12 @@ async def stateless_message(
     conversation_history: list[dict],
     mind_mode: bool = False,
     context_material_title: str | None = None,
+    course_id: int | None = None,
 ) -> str:
     history = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in conversation_history]
-    prompt_for_ai = _apply_document_context(message, context_material_title)
+    prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
+    if is_grounded:
+        return await run_document_chat(prompt_for_ai, history)
     history.append({"role": "user", "content": prompt_for_ai})
     return await run_chat(prompt_for_ai, history, mind_mode=mind_mode)
 

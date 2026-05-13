@@ -12,7 +12,7 @@ def run_saarthi_agent(query: str, messages: list = []) -> ExpertResponse:
     """
     logger.info(f"--- Running Saarthi (General Agent) for: {query} ---")
     
-    llm = ChatOpenAI(model="gpt-4.1", temperature=0.7)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
     
     system_prompt = (
         "You are Saarthi, a friendly and humble AI assistant designed to help engineering students, "

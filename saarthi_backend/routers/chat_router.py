@@ -63,7 +63,9 @@ async def chat_message(body: ChatMessageRequest):
     """Stateless chat (AIChatbot, material viewer). No persistence."""
     history = [{"role": m.role, "content": m.content} for m in body.conversationHistory]
     answer = await chat_service.stateless_message(
-        body.message, history, context_material_title=body.contextMaterialTitle
+        body.message, history,
+        context_material_title=body.contextMaterialTitle,
+        course_id=body.courseId,
     )
     return ChatMessageResponse(response=answer)
 
@@ -86,15 +88,27 @@ async def stream_message(
     from saarthi_backend.service.chat_service import _apply_document_context
     from saarthi_backend.dao import ChatMessageDAO, ConversationDAO
 
-    prompt = _apply_document_context(body.message, body.contextMaterialTitle)
+    prompt, is_grounded = _apply_document_context(body.message, body.contextMaterialTitle, course_id=body.courseId)
 
     async def event_generator():
+        import asyncio
         full_response = []
-        async for chunk in run_chat_stream(prompt, history):
-            yield chunk
-            if chunk.startswith("data: ") and not chunk.startswith("data: ["):
-                token = chunk[6:].rstrip("\n").replace("\\n", "\n")
-                full_response.append(token)
+        from saarthi_backend.ai import run_document_chat
+        if is_grounded:
+            answer = await run_document_chat(prompt, history)
+            words = answer.split(" ")
+            for i, word in enumerate(words):
+                chunk_text = word + (" " if i < len(words) - 1 else "")
+                yield f"data: {chunk_text.replace(chr(10), chr(92) + 'n')}\n\n"
+                full_response.append(chunk_text)
+                await asyncio.sleep(0.012)
+            yield "data: [DONE]\n\n"
+        else:
+            async for chunk in run_chat_stream(prompt, history):
+                yield chunk
+                if chunk.startswith("data: ") and not chunk.startswith("data: ["):
+                    token = chunk[6:].rstrip("\n").replace("\\n", "\n")
+                    full_response.append(token)
 
         # Persist to DB after streaming completes
         try:
@@ -217,7 +231,9 @@ async def send_message(
 ):
     """Non-streaming: append user message, call AI, append assistant reply."""
     result = await chat_service.send_message(
-        db, conversation_id, user.id, body.message, context_material_title=body.contextMaterialTitle
+        db, conversation_id, user.id, body.message,
+        context_material_title=body.contextMaterialTitle,
+        course_id=body.courseId,
     )
     if not result:
         raise NotFoundError("Conversation not found.", details=None)
