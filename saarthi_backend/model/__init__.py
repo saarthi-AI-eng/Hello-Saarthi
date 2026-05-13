@@ -7,6 +7,7 @@ from .quiz_model import Quiz, QuizQuestion, QuizAttempt
 from .note_model import Note
 from .notification_model import Notification
 from .chat_model import Conversation, ChatMessage
+from .code_problem_model import CodeProblem
 
 __all__ = [
     "Base",
@@ -29,4 +30,5 @@ __all__ = [
     "QuizAttempt",
     "Note",
     "Notification",
+    "CodeProblem",
 ]

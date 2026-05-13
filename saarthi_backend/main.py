@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from saarthi_backend.model import Base
 from saarthi_backend.routers import api_router
 from saarthi_backend.scripts.seed_demo_users import seed_demo_users
+from saarthi_backend.scripts.seed_code_problems import seed_code_problems
 from saarthi_backend.utils.config import get_settings
 from saarthi_backend.utils.exceptions import (
     AIServiceError,
@@ -100,7 +101,25 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE saarthi_videos ADD COLUMN IF NOT EXISTS transcript_text TEXT"
             )
         )
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS saarthi_code_problems (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                difficulty TEXT NOT NULL DEFAULT 'medium',
+                points INTEGER NOT NULL DEFAULT 50,
+                description TEXT NOT NULL DEFAULT '',
+                requirements_json TEXT,
+                expected_output TEXT,
+                hints_json TEXT,
+                starter_code_json TEXT,
+                topics TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """))
     logger.info("Column migration: saarthi_videos.transcript_text ensured")
+    logger.info("Table migration: saarthi_code_problems ensured")
     session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,
@@ -111,6 +130,8 @@ async def lifespan(app: FastAPI):
     app.state.db_session_factory = session_factory
     async with session_factory() as session:
         await seed_demo_users(session)
+    async with session_factory() as session:
+        await seed_code_problems(session)
 
     # Sync FAISS knowledge-base indexes from Supabase Storage on startup.
     # If local indexes already exist they are used as-is (no download).
