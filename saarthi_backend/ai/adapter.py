@@ -93,23 +93,67 @@ def _clean_response(text: str) -> str:
     return out.strip()
 
 
+_TUTOR_SYSTEM = (
+    "You are Saarthi, a friendly AI tutor for engineering students.\n"
+    "Answer clearly and concisely using Markdown formatting.\n"
+    "Math rules — follow exactly:\n"
+    "- Inline math: $x(t)$, $\\omega_0$, $H(j\\omega)$\n"
+    "- Display math: $$X(j\\omega) = \\int_{-\\infty}^{\\infty} x(t)e^{-j\\omega t}dt$$\n"
+    "- NEVER write bare LaTeX without dollar signs.\n"
+    "Tone rules:\n"
+    "- Never mention 'knowledge base', 'context', 'sources', or 'provided excerpts'.\n"
+    "- Never say 'based on the information' or 'I don't have this in my notes'.\n"
+    "- Just answer like a tutor who knows the subject."
+)
+
+
 async def run_chat(
     query: str,
     conversation_history: list[dict],
     mind_mode: bool = False,
 ) -> str:
-    loop = asyncio.get_running_loop()
+    # mind_mode uses the full LangGraph multi-agent pipeline
+    if mind_mode:
+        loop = asyncio.get_running_loop()
+        try:
+            final_state = await asyncio.wait_for(
+                loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, mind_mode),
+                timeout=AI_REQUEST_TIMEOUT,
+            )
+            return _clean_response(_extract_answer(final_state))
+        except asyncio.TimeoutError:
+            logger.warning("Mind mode timed out")
+            return "The request took too long. Please try a shorter question."
+        except Exception as e:
+            logger.exception("Mind mode failed: %s", e)
+            return "Something went wrong. Please try again."
+
+    # Standard chat — single direct GPT-4.1 call, no multi-agent overhead
     try:
-        final_state = await asyncio.wait_for(
-            loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, mind_mode),
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        messages = [{"role": "system", "content": _TUTOR_SYSTEM}]
+        for m in conversation_history[-8:]:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": query})
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model="gpt-4.1",
+                messages=messages,
+                temperature=0.4,
+                max_tokens=1200,
+            ),
             timeout=AI_REQUEST_TIMEOUT,
         )
-        return _clean_response(_extract_answer(final_state))
+        return _clean_response((response.choices[0].message.content or "").strip())
     except asyncio.TimeoutError:
-        logger.warning("AI graph timed out after %s seconds", AI_REQUEST_TIMEOUT)
+        logger.warning("AI chat timed out")
         return "The request took too long. Please try a shorter question."
     except Exception as e:
-        logger.exception("AI graph failed: %s", e)
+        logger.exception("AI chat failed: %s", e)
         return "Something went wrong while generating a response. Please try again."
 
 
@@ -169,23 +213,48 @@ async def run_chat_stream(
     conversation_history: list[dict],
     mind_mode: bool = False,
 ) -> AsyncGenerator[str, None]:
-    """
-    Run LangGraph pipeline, then word-stream the cleaned answer.
-    No second LLM call — the graph answer is good enough to stream directly.
-    """
+    """True token-by-token streaming via OpenAI stream=True."""
     try:
-        loop = asyncio.get_running_loop()
-        final_state = await asyncio.wait_for(
-            loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, mind_mode),
-            timeout=AI_REQUEST_TIMEOUT,
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+
+        if mind_mode:
+            # Mind mode: run graph first, then stream result word-by-word
+            loop = asyncio.get_running_loop()
+            final_state = await asyncio.wait_for(
+                loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, mind_mode),
+                timeout=AI_REQUEST_TIMEOUT,
+            )
+            answer = _clean_response(_extract_answer(final_state))
+            for i, word in enumerate(answer.split(" ")):
+                chunk = word + (" " if i < len(answer.split(" ")) - 1 else "")
+                yield f"data: {chunk.replace(chr(10), chr(92) + 'n')}\n\n"
+                await asyncio.sleep(0.008)
+            yield "data: [DONE]\n\n"
+            return
+
+        # Standard chat — real OpenAI token streaming, first token in ~1s
+        messages = [{"role": "system", "content": _TUTOR_SYSTEM}]
+        for m in conversation_history[-8:]:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": query})
+
+        full_response: list[str] = []
+        stream = await client.chat.completions.create(
+            model="gpt-4.1",
+            messages=messages,
+            temperature=0.4,
+            max_tokens=1200,
+            stream=True,
         )
-        answer = _clean_response(_extract_answer(final_state))
-        # Stream word-by-word so the UI feels responsive immediately
-        words = answer.split(" ")
-        for i, word in enumerate(words):
-            chunk = word + (" " if i < len(words) - 1 else "")
-            yield f"data: {chunk.replace(chr(10), chr(92) + 'n')}\n\n"
-            await asyncio.sleep(0.008)
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                full_response.append(delta)
+                yield f"data: {delta.replace(chr(10), chr(92) + 'n')}\n\n"
         yield "data: [DONE]\n\n"
 
     except Exception as e:
