@@ -182,8 +182,9 @@ def fetch_youtube_transcript(url: str) -> str:
         return ""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        segments = YouTubeTranscriptApi.get_transcript(video_id)
-        return " ".join(s["text"] for s in segments if s.get("text"))
+        api = YouTubeTranscriptApi()
+        transcript = api.fetch(video_id)
+        return " ".join(s.text for s in transcript if s.text)
     except Exception as e:
         logger.warning("YouTube transcript fetch failed for %s: %s", video_id, e)
         return ""
