@@ -385,7 +385,7 @@ async def analyse(
 
         # Any hint of course creation → scaffold full course structure
         if intent == "create_course":
-            preview = await _ai_parse_syllabus(text, user.fullName or user.email)
+            preview = await _ai_parse_syllabus(text, user.full_name or user.email)
             if preview:
                 # Override title if teacher named it explicitly
                 if classification.get("courseName"):
