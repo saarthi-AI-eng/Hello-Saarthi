@@ -288,24 +288,39 @@ async def _ai_parse_syllabus(text: str, instructor_name: str) -> CoursePreview |
 
 
 async def _ai_classify_message(message: str, courses: list[dict]) -> dict[str, Any]:
-    """Classify teacher message intent: add_material, playlist_import, create_course, general."""
+    """Classify teacher message intent for text-only messages."""
+    return await _ai_classify_message_with_file(message, "", courses)
+
+
+async def _ai_classify_message_with_file(message: str, filename: str, courses: list[dict]) -> dict[str, Any]:
+    """Classify teacher intent when a file is also present."""
     try:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
         course_list = json.dumps([{"id": c["id"], "title": c["title"]} for c in courses[:10]])
+        file_context = f'\nUploaded file: "{filename}"' if filename else ""
 
         prompt = (
-            "A teacher typed this message. Classify their intent and extract relevant info.\n\n"
-            f'Teacher message: "{message}"\n\n'
-            f"Teacher's courses: {course_list}\n\n"
-            "Return ONLY JSON with this structure:\n"
+            "A teacher sent this message (and possibly a file). Classify their intent.\n\n"
+            f'Teacher message: "{message}"{file_context}\n\n'
+            f"Teacher's existing courses: {course_list}\n\n"
+            "INTENT RULES — read carefully:\n"
+            '- "create_course": teacher wants to CREATE A NEW COURSE from this file/content. '
+            "Signs: they say 'new course', 'create course', 'called it X', 'make a course', "
+            "or uploaded a PDF and their message implies course creation.\n"
+            '- "add_material": teacher wants to ADD this file to an EXISTING course.\n'
+            '- "playlist_import": message contains a YouTube playlist URL.\n'
+            '- "general": just a question, no course/file action.\n\n'
+            "IMPORTANT: If the teacher uploaded a PDF AND mentioned a course name or said "
+            "'new course' or 'create' — that is create_course, NOT add_material.\n\n"
+            "Return ONLY JSON:\n"
             "{\n"
-            '  "intent": "one of: playlist_import | add_material | create_course | general",\n'
-            '  "courseId": "matched course id or null",\n'
-            '  "topic": "topic name if mentioned or null",\n'
-            '  "playlistUrl": "YouTube playlist URL if present in message or null",\n'
-            '  "question": "clarifying question to ask teacher if info is missing, or null"\n'
+            '  "intent": "create_course | add_material | playlist_import | general",\n'
+            '  "courseName": "the name teacher wants for the new course, if mentioned, else null",\n'
+            '  "courseId": "matching existing course id if add_material, else null",\n'
+            '  "topic": "topic name if mentioned else null",\n'
+            '  "question": "clarifying question if critical info missing, else null"\n'
             "}"
         )
 
@@ -365,16 +380,16 @@ async def analyse(
 
         # Classify intent from message + file
         combined_msg = message or f"I uploaded {file.filename}"
-        classification = await _ai_classify_message(combined_msg, courses)
+        classification = await _ai_classify_message_with_file(combined_msg, file.filename or "", courses)
         intent = classification.get("intent", "add_material")
 
-        # Looks like a syllabus → parse full course structure
-        if intent == "create_course" or any(
-            kw in (file.filename or "").lower()
-            for kw in ("syllabus", "curriculum", "course_plan", "outline")
-        ):
+        # Any hint of course creation → scaffold full course structure
+        if intent == "create_course":
             preview = await _ai_parse_syllabus(text, user.fullName or user.email)
             if preview:
+                # Override title if teacher named it explicitly
+                if classification.get("courseName"):
+                    preview.title = classification["courseName"]
                 return AnalyseResponse(
                     intent="create_course",
                     question=None,
