@@ -11,6 +11,7 @@ from saarthi_backend.routers.data_router import router as data_router
 from saarthi_backend.routers.note_router import router as note_router
 from saarthi_backend.routers.notification_router import router as notification_router
 from saarthi_backend.routers.quiz_router import router as quiz_router
+from saarthi_backend.routers.teacher_router import router as teacher_router
 from saarthi_backend.routers.user_router import router as user_router
 from saarthi_backend.routers.video_router import router as video_router
 
@@ -26,4 +27,5 @@ api_router.include_router(quiz_router)
 api_router.include_router(note_router)
 api_router.include_router(notification_router)
 api_router.include_router(data_router)
+api_router.include_router(teacher_router)
 api_router.include_router(admin_router)
