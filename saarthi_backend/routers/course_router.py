@@ -50,7 +50,7 @@ _UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 _MAX_UPLOAD_MB = 10
 
 # Strict allowlist for course material file types (serve + upload)
-_ALLOWED_MATERIAL_EXTENSIONS = frozenset({".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt"})
+_ALLOWED_MATERIAL_EXTENSIONS = frozenset({".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt", ".jpg", ".jpeg", ".png", ".gif", ".webp"})
 _CHUNK_SIZE = 64 * 1024  # 64 KB for streaming
 
 
