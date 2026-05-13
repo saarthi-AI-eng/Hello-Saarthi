@@ -180,6 +180,58 @@ async def run_chat(
         return "Something went wrong while generating a response. Please try again."
 
 
+async def run_video_chat(
+    enriched_prompt: str,
+    conversation_history: list[dict],
+) -> str:
+    """Direct OpenAI call for video-transcript-grounded Q&A.
+
+    Clean conversational style — no checkpoints, no follow-up chips.
+    Goes progressively deeper when the student asks for more.
+    """
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are Saarthi, an expert tutor helping a student understand a video lecture.\n"
+                    "The user's prompt contains transcript excerpts from that lecture.\n"
+                    "Answer using those excerpts as your primary source, but you may add supporting "
+                    "context from your own knowledge to make the explanation complete.\n\n"
+                    "STYLE:\n"
+                    "- Be a teacher, not a summariser. Explain the *why*, not just the *what*.\n"
+                    "- When the student says 'tell me more' or 'explain further', go DEEPER — "
+                    "don't restate what you already said. Cover the next level of detail.\n"
+                    "- Use ## headings to organise long answers into clear sections.\n"
+                    "- Use $...$ for inline math, $$...$$ for display math.\n"
+                    "- Bullet points for lists, numbered steps for procedures.\n"
+                    "- Keep each section focused. No padding, no repetition.\n"
+                    "- Do NOT add CHECKPOINT lines or FOLLOWUPS lines."
+                ),
+            },
+            *conversation_history[-8:],
+            {"role": "user", "content": enriched_prompt},
+        ]
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model="gpt-4.1",
+                messages=messages,
+                temperature=0.2,
+                max_tokens=2000,
+            ),
+            timeout=AI_REQUEST_TIMEOUT,
+        )
+        return _clean_response((response.choices[0].message.content or "").strip())
+    except asyncio.TimeoutError:
+        logger.warning("Video chat timed out")
+        return "The request took too long. Please try a shorter question."
+    except Exception as e:
+        logger.exception("Video chat failed: %s", e)
+        return "Something went wrong while generating a response. Please try again."
+
+
 async def run_document_chat(
     enriched_prompt: str,
     conversation_history: list[dict],

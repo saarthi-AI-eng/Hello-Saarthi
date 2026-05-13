@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from saarthi_backend.ai import run_chat, run_document_chat
+from saarthi_backend.ai import run_chat, run_document_chat, run_video_chat
 from saarthi_backend.dao import ChatMessageDAO, ConversationDAO
 from saarthi_backend.model import ChatMessage, Conversation
 from saarthi_backend.schema.chat_schemas import (
@@ -241,6 +241,8 @@ async def stateless_message(
         prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
 
     if is_grounded:
+        if context_video_id:
+            return await run_video_chat(prompt_for_ai, history)
         return await run_document_chat(prompt_for_ai, history)
     history.append({"role": "user", "content": prompt_for_ai})
     return await run_chat(prompt_for_ai, history, mind_mode=mind_mode)
