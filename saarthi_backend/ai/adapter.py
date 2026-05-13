@@ -170,64 +170,25 @@ async def run_chat_stream(
     mind_mode: bool = False,
 ) -> AsyncGenerator[str, None]:
     """
-    Run the LangGraph pipeline then stream the final answer token-by-token.
-    Yields SSE lines: 'data: <chunk>\\n\\n'. Sends 'data: [DONE]\\n\\n' at end.
-    Falls back to word-chunked delivery if OpenAI streaming fails.
+    Run LangGraph pipeline, then word-stream the cleaned answer.
+    No second LLM call — the graph answer is good enough to stream directly.
     """
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-
-        # Run the full graph first to get KB-retrieved context
         loop = asyncio.get_running_loop()
         final_state = await asyncio.wait_for(
             loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, mind_mode),
             timeout=AI_REQUEST_TIMEOUT,
         )
-        kb_answer = _clean_response(_extract_answer(final_state))
-
-        # Stream the answer through OpenAI with retrieved context baked in
-        messages_for_stream = [
-            {
-                "role": "system",
-                "content": (
-                    "You are Saarthi, a friendly AI tutor for students. "
-                    "Present the answer below clearly using Markdown. "
-                    "Use $...$ for inline math and $$...$$ for display math. "
-                    "Do NOT mention knowledge bases, sources, citations, or where information came from. "
-                    "Do NOT say things like 'not found in knowledge base' or 'based on the provided context'. "
-                    "Just answer naturally as a tutor would."
-                ),
-            },
-            *conversation_history[-6:],
-            {"role": "assistant", "content": kb_answer},
-            {"role": "user", "content": f"Present this answer clearly for: {query}"},
-        ]
-
-        stream = await client.chat.completions.create(
-            model="gpt-4.1",
-            messages=messages_for_stream,
-            stream=True,
-            temperature=0.2,
-            max_tokens=2048,
-        )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                yield f"data: {delta.replace(chr(10), '\\n')}\n\n"
-
+        answer = _clean_response(_extract_answer(final_state))
+        # Stream word-by-word so the UI feels responsive immediately
+        words = answer.split(" ")
+        for i, word in enumerate(words):
+            chunk = word + (" " if i < len(words) - 1 else "")
+            yield f"data: {chunk.replace(chr(10), chr(92) + 'n')}\n\n"
+            await asyncio.sleep(0.008)
         yield "data: [DONE]\n\n"
 
     except Exception as e:
-        logger.exception("Streaming failed, using fallback: %s", e)
-        try:
-            answer = await run_chat(query, conversation_history, mind_mode)
-            words = answer.split(" ")
-            for i, word in enumerate(words):
-                chunk = word + (" " if i < len(words) - 1 else "")
-                yield f"data: {chunk.replace(chr(10), '\\n')}\n\n"
-                await asyncio.sleep(0.012)
-            yield "data: [DONE]\n\n"
-        except Exception:
-            yield "data: [ERROR] Could not generate response\n\n"
-            yield "data: [DONE]\n\n"
+        logger.exception("Streaming failed: %s", e)
+        yield "data: [ERROR] Could not generate response\n\n"
+        yield "data: [DONE]\n\n"

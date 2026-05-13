@@ -12,7 +12,7 @@ def decompose_and_route(query: str, messages: List[Dict[str, Any]] = []) -> Rout
     """
     Decomposes the query and routes it to experts.
     """
-    llm = ChatOpenAI(model="gpt-4.1", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     expert_info = []
     for expert in ExpertName:
         desc = get_expert_description(expert.value)
