@@ -92,6 +92,15 @@ async def lifespan(app: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Dev table creation from ORM enabled (SAARTHI_DEV_AUTOCREATE_TABLES)")
+
+    # Incremental column migrations — safe to run on every startup (IF NOT EXISTS).
+    async with engine.begin() as conn:
+        await conn.execute(
+            __import__("sqlalchemy", fromlist=["text"]).text(
+                "ALTER TABLE saarthi_videos ADD COLUMN IF NOT EXISTS transcript_text TEXT"
+            )
+        )
+    logger.info("Column migration: saarthi_videos.transcript_text ensured")
     session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,
