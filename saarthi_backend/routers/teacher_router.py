@@ -48,6 +48,7 @@ class CoursePreview(BaseModel):
     instructor: str
     description: str
     topics: list[TopicPreview] = []
+    sourceFileUrl: str | None = None   # the uploaded PDF to add as a material
 
 
 class VideoPreview(BaseModel):
@@ -233,27 +234,30 @@ async def _ai_parse_syllabus(text: str, instructor_name: str) -> CoursePreview |
 
         prompt = (
             "You are helping a teacher set up their course on Saarthi.\n"
-            "Extract the course structure from this syllabus and return ONLY valid JSON.\n\n"
+            "The teacher uploaded a document (could be a syllabus OR a lecture PDF).\n"
+            "Extract a course structure from it and return ONLY valid JSON.\n\n"
             "Return this exact structure:\n"
             "{\n"
-            '  "title": "course title",\n'
-            '  "code": "short course code like EE301",\n'
-            '  "description": "1-2 sentence description",\n'
+            '  "title": "course title (infer from content if not explicit)",\n'
+            '  "code": "short course code like EE301 or CS101",\n'
+            '  "description": "1-2 sentence description of what this course covers",\n'
             '  "topics": [\n'
             '    {\n'
-            '      "title": "topic/week title",\n'
-            '      "assignments": ["assignment title 1", "assignment title 2"],\n'
-            '      "materials": ["material/reading title 1"]\n'
+            '      "title": "topic title",\n'
+            '      "assignments": ["assignment title if any"],\n'
+            '      "materials": []\n'
             "    }\n"
             "  ]\n"
             "}\n\n"
             "Rules:\n"
-            "- topics should be grouped by week or unit, max 16 topics\n"
-            "- assignments: only things explicitly mentioned as assignments/labs/projects/exams\n"
-            "- materials: readings, references, lecture notes mentioned\n"
-            "- If info is missing, make a reasonable inference from context\n"
+            "- If it's a SYLLABUS: extract weeks/units as topics, max 16\n"
+            "- If it's a LECTURE PDF: extract the main sections/chapters as topics (use headings)\n"
+            "- If it's a single lecture with no clear sections: create 1 topic named after the subject\n"
+            "- assignments: only if explicitly mentioned, otherwise leave empty []\n"
+            "- ALWAYS return at least 1 topic — never return empty topics array\n"
+            "- Infer the course title and code from the content — never return 'Untitled Course'\n"
             "- Return ONLY the JSON object, no explanation\n\n"
-            f"SYLLABUS TEXT:\n{text[:60_000]}"
+            f"DOCUMENT TEXT:\n{text[:60_000]}"
         )
 
         response = await client.chat.completions.create(
@@ -390,6 +394,8 @@ async def analyse(
                 # Override title if teacher named it explicitly
                 if classification.get("courseName"):
                     preview.title = classification["courseName"]
+                # Always attach the uploaded file so it gets added as a material
+                preview.sourceFileUrl = file_url
                 return AnalyseResponse(
                     intent="create_course",
                     question=None,
@@ -507,6 +513,34 @@ async def execute_create_course(
             db.add(mat)
             created_materials.append(mat_title)
 
+    # Always add the source PDF as a material if present
+    if p.sourceFileUrl:
+        from pathlib import Path as _Path
+        pdf_title = _Path(p.sourceFileUrl).stem.replace("_", " ").replace("-", " ").title()
+        source_mat = Material(
+            course_id=course.id,
+            title=pdf_title,
+            type="pdf",
+            url=p.sourceFileUrl,
+            description="Uploaded by teacher",
+            topic="Course Materials",
+        )
+        db.add(source_mat)
+        await db.flush()
+        # Trigger FAISS indexing
+        file_path = _Path("uploads") / _Path(p.sourceFileUrl).name
+        if file_path.exists():
+            import asyncio as _asyncio
+            _asyncio.create_task(
+                run_in_threadpool(
+                    index_material_background,
+                    str(file_path),
+                    course.id,
+                    source_mat.id,
+                    pdf_title,
+                )
+            )
+
     await db.commit()
 
     return {
@@ -514,7 +548,7 @@ async def execute_create_course(
         "title": course.title,
         "topicsCreated": len(p.topics),
         "assignmentsCreated": len(created_assignments),
-        "materialsCreated": len(created_materials),
+        "materialsCreated": len(created_materials) + (1 if p.sourceFileUrl else 0),
     }
 
 
