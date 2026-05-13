@@ -165,6 +165,36 @@ def _apply_document_context(
     return fallback, False
 
 
+def _apply_video_context(
+    message: str,
+    video_id: int | None,
+    video_title: str | None,
+) -> tuple[str, bool]:
+    """Enrich prompt with FAISS chunks from the video's indexed transcript.
+
+    Returns (enriched_prompt, is_grounded). Same pattern as _apply_document_context
+    but reads from knowledge_base/videos/<video_id>/ instead of courses.
+    """
+    if not video_id or not video_title:
+        return message, False
+    from saarthi_backend.service.indexing_service import fetch_video_transcript_context
+    kb_context = fetch_video_transcript_context(message, video_id, video_title)
+    if kb_context:
+        prompt = (
+            f'The student is watching the video lecture titled "{video_title}".\n\n'
+            f"Here are relevant excerpts from that video's transcript:\n{kb_context}\n\n"
+            f"Answer the student's question using ONLY the transcript excerpts above. "
+            f"Do not draw on outside knowledge unless the excerpts are insufficient.\n\nQuestion: {message}"
+        )
+        return prompt, True
+    fallback = (
+        f'The student is watching the video lecture "{video_title}". '
+        f"No transcript has been indexed for this video yet. "
+        f"Answer their question using your general course knowledge.\n\nQuestion: {message}"
+    )
+    return fallback, False
+
+
 async def send_message(
     db: AsyncSession,
     conversation_id: int,
@@ -199,9 +229,17 @@ async def stateless_message(
     mind_mode: bool = False,
     context_material_title: str | None = None,
     course_id: int | None = None,
+    context_video_id: int | None = None,
+    context_video_title: str | None = None,
 ) -> str:
     history = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in conversation_history]
-    prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
+
+    # Video transcript grounding takes priority over document grounding
+    if context_video_id:
+        prompt_for_ai, is_grounded = _apply_video_context(message, context_video_id, context_video_title)
+    else:
+        prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
+
     if is_grounded:
         return await run_document_chat(prompt_for_ai, history)
     history.append({"role": "user", "content": prompt_for_ai})

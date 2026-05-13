@@ -156,6 +156,98 @@ def index_material_background(
     t.start()
 
 
+_VIDEO_KB_ROOT = Path("knowledge_base") / "videos"
+
+
+def _index_video_transcript_sync(video_id: int, video_title: str, transcript_text: str) -> bool:
+    """Blocking: chunk, embed, and store a video transcript into a per-video FAISS index."""
+    try:
+        from langchain_community.vectorstores import FAISS
+        from langchain_openai import OpenAIEmbeddings
+        from langchain_core.documents import Document
+    except ImportError:
+        logger.error("LangChain / OpenAI packages not available for indexing")
+        return False
+
+    if not transcript_text or len(transcript_text.strip()) < 50:
+        logger.info("Transcript too short to index for video %d", video_id)
+        return False
+
+    chunks = _chunk_text(transcript_text)
+    if not chunks:
+        return False
+
+    source_tag = video_title.lower().replace(" ", "_")
+    docs = [
+        Document(
+            page_content=chunk,
+            metadata={
+                "source": source_tag,
+                "video_title": video_title,
+                "video_id": video_id,
+                "chunk_index": i,
+            },
+        )
+        for i, chunk in enumerate(chunks)
+    ]
+
+    try:
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        index_path = _VIDEO_KB_ROOT / str(video_id) / "vector_store"
+        index_path.mkdir(parents=True, exist_ok=True)
+
+        vs = FAISS.from_documents(docs, embeddings)
+        vs.save_local(str(index_path))
+        logger.info("Indexed %d transcript chunks for video %d ('%s')", len(docs), video_id, video_title)
+        return True
+    except Exception as e:
+        logger.error("FAISS transcript indexing failed for video %d: %s", video_id, e)
+        return False
+
+
+def index_video_transcript_background(video_id: int, video_title: str, transcript_text: str) -> None:
+    """Fire-and-forget: index a video transcript in a background thread."""
+    def _run():
+        logger.info("Background transcript indexing started for video %d", video_id)
+        ok = _index_video_transcript_sync(video_id, video_title, transcript_text)
+        if ok:
+            logger.info("Transcript indexing complete for video %d", video_id)
+        else:
+            logger.warning("Transcript indexing skipped/failed for video %d", video_id)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+def fetch_video_transcript_context(query: str, video_id: int, video_title: str, k: int = 5) -> str:
+    """Search the per-video FAISS index for chunks relevant to the query."""
+    try:
+        from langchain_community.vectorstores import FAISS
+        from langchain_openai import OpenAIEmbeddings
+
+        index_path = _VIDEO_KB_ROOT / str(video_id) / "vector_store"
+        if not (index_path / "index.faiss").exists():
+            return ""
+
+        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        vs = FAISS.load_local(str(index_path), embeddings, allow_dangerous_deserialization=True)
+        docs = vs.similarity_search(f"{video_title} {query}", k=k)
+        chunks = [d.page_content.strip() for d in docs if d.page_content.strip()]
+        return "\n\n---\n\n".join(chunks[:k])
+    except Exception as e:
+        logger.warning("Video transcript context fetch failed for video %d: %s", video_id, e)
+        return ""
+
+
+def delete_video_transcript_index(video_id: int) -> None:
+    """Remove the per-video FAISS index when a video is deleted."""
+    import shutil
+    index_path = _VIDEO_KB_ROOT / str(video_id)
+    if index_path.exists():
+        shutil.rmtree(str(index_path), ignore_errors=True)
+        logger.info("Deleted transcript index for video %d", video_id)
+
+
 def delete_material_from_index(
     material_title: str,
     course_id: int,

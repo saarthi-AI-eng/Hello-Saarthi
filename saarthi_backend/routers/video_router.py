@@ -15,6 +15,7 @@ from saarthi_backend.schema.video_schemas import (
     VideoProgressResponse,
     VideoProgressUpdate,
     VideoResponse,
+    VideoTranscriptUpload,
 )
 from saarthi_backend.service import video_service
 from saarthi_backend.utils.exceptions import NotFoundError, ValidationError
@@ -34,6 +35,7 @@ def _video_to_response(v):
         embedUrl=v.embed_url,
         chaptersJson=v.chapters_json,
         sortOrder=v.sort_order,
+        hasTranscript=bool(v.transcript_text),
     )
 
 
@@ -85,6 +87,8 @@ async def delete_video(
     deleted = await video_service.delete_video(db, video_id)
     if not deleted:
         raise NotFoundError("Video not found.", details=None)
+    from saarthi_backend.service.indexing_service import delete_video_transcript_index
+    delete_video_transcript_index(video_id)
     await db.commit()
 
 
@@ -125,7 +129,30 @@ async def create_video(
     return _video_to_response(v)
 
 
+# ----- Transcript -----
+
+@router.post("/{video_id}/transcript", status_code=200)
+async def upload_transcript(
+    video_id: int,
+    body: VideoTranscriptUpload,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Upload / replace a video transcript (admin/teacher). Triggers background FAISS indexing."""
+    if user.role not in ("admin", "teacher"):
+        raise ValidationError("Forbidden.", details=None)
+    video = await video_service.get_video(db, video_id)
+    if not video:
+        raise NotFoundError("Video not found.", details=None)
+    video.transcript_text = body.transcriptText
+    await db.commit()
+    from saarthi_backend.service.indexing_service import index_video_transcript_background
+    index_video_transcript_background(video_id, video.title, body.transcriptText)
+    return {"status": "indexing", "videoId": video_id}
+
+
 # ----- Progress -----
+
 @router.get("/{video_id}/progress", response_model=VideoProgressResponse)
 async def get_progress(
     video_id: int,
@@ -163,6 +190,7 @@ async def update_progress(
 
 
 # ----- Notes -----
+
 @router.get("/{video_id}/notes", response_model=list[VideoNoteResponse])
 async def list_notes(
     video_id: int,

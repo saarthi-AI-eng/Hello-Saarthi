@@ -16,6 +16,8 @@ class ChatMessageRequest(BaseModel):
     conversationHistory: list[ChatMessageItem] = Field(default_factory=list)
     contextMaterialTitle: Optional[str] = None
     courseId: Optional[int] = None
+    contextVideoId: Optional[int] = None
+    contextVideoTitle: Optional[str] = None
 
 
 class ChatMessageResponse(BaseModel):
@@ -31,6 +33,8 @@ class StreamMessageRequest(BaseModel):
     conversationId: Optional[str] = Field(None, description="If provided, exchange is persisted.")
     contextMaterialTitle: Optional[str] = None
     courseId: Optional[int] = None
+    contextVideoId: Optional[int] = None
+    contextVideoTitle: Optional[str] = None
 
 
 # ─── Study Plan ───────────────────────────────────────────────────────────────
