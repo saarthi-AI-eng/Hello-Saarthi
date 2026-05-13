@@ -170,6 +170,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS must be outermost middleware so preflight OPTIONS are handled before any other middleware runs
+_origins = [o.strip() for o in get_settings().cors_origins.split(",") if o.strip()] or ["http://localhost:3000"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Request ID middleware: set request_id on request.state and add X-Request-ID to response
 REQUEST_ID_HEADER = "X-Request-ID"
 
@@ -186,6 +196,8 @@ async def request_id_middleware(request: Request, call_next):
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     """Per-IP rate limits: stricter for auth, upload, and material file."""
+    if request.method == "OPTIONS":
+        return await call_next(request)
     path = request.url.path or ""
     identifier = get_identifier_from_request(request)
     if path.startswith("/api/auth") and request.method == "POST":
@@ -237,16 +249,6 @@ async def request_logging_middleware(request: Request, call_next):
     )
     return response
 
-
-# CORS: explicit origins required when allow_credentials=True (browsers reject * with credentials)
-_origins = [o.strip() for o in get_settings().cors_origins.split(",") if o.strip()] or ["http://localhost:3000"]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 def _request_id(request: Request) -> str | None:
