@@ -39,3 +39,44 @@ class CodeExecuteResponse(BaseModel):
     result: CodeExecuteResult
     aiExplanation: Optional[str] = None   # populated when explainOnError=True and exitCode != 0
     aiSuggestions: list[str] = []
+
+
+class CodeProblemResponse(BaseModel):
+    id: int
+    title: str
+    difficulty: str
+    points: int
+    description: str
+    requirements: list[str]
+    expectedOutput: Optional[str]
+    hints: list[str]
+    starterCode: dict[str, str]
+    topics: Optional[str]
+    sortOrder: int
+
+
+class CodeProblemCreate(BaseModel):
+    title: str
+    difficulty: str = "medium"
+    points: int = 50
+    description: str
+    requirements: list[str] = []
+    expectedOutput: Optional[str] = None
+    hints: list[str] = []
+    starterCode: dict[str, str] = {}
+    topics: Optional[str] = None
+    sortOrder: int = 0
+
+
+class CodeProblemUpdate(BaseModel):
+    title: Optional[str] = None
+    difficulty: Optional[str] = None
+    points: Optional[int] = None
+    description: Optional[str] = None
+    requirements: Optional[list[str]] = None
+    expectedOutput: Optional[str] = None
+    hints: Optional[list[str]] = None
+    starterCode: Optional[dict[str, str]] = None
+    topics: Optional[str] = None
+    sortOrder: Optional[int] = None
+    isActive: Optional[bool] = None
