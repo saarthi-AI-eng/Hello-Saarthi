@@ -16,6 +16,7 @@ class VideoResponse(BaseModel):
     embedUrl: Optional[str] = None
     chaptersJson: Optional[str] = None
     sortOrder: int
+    hasTranscript: bool = False
 
     class Config:
         populate_by_name = True
@@ -61,3 +62,7 @@ class VideoNoteResponse(BaseModel):
 class VideoNoteCreate(BaseModel):
     timeSeconds: int = Field(..., ge=0)
     text: str = Field(..., min_length=1)
+
+
+class VideoTranscriptUpload(BaseModel):
+    transcriptText: str = Field(..., min_length=10)

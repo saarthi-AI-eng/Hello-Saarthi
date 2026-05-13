@@ -92,6 +92,15 @@ async def lifespan(app: FastAPI):
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Dev table creation from ORM enabled (SAARTHI_DEV_AUTOCREATE_TABLES)")
+
+    # Incremental column migrations — safe to run on every startup (IF NOT EXISTS).
+    async with engine.begin() as conn:
+        await conn.execute(
+            __import__("sqlalchemy", fromlist=["text"]).text(
+                "ALTER TABLE saarthi_videos ADD COLUMN IF NOT EXISTS transcript_text TEXT"
+            )
+        )
+    logger.info("Column migration: saarthi_videos.transcript_text ensured")
     session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,
@@ -112,6 +121,20 @@ async def lifespan(app: FastAPI):
         logger.info("KB startup sync: %s", kb_status)
     except Exception as _kb_err:
         logger.warning("KB startup sync skipped: %s", _kb_err)
+
+    # Auto-index YouTube transcripts for any existing videos that don't have one yet.
+    try:
+        from saarthi_backend.service.indexing_service import auto_index_youtube_video
+        from saarthi_backend.model.video_model import Video
+        from sqlalchemy import select
+        async with session_factory() as _s:
+            result = await _s.execute(select(Video))
+            all_videos = result.scalars().all()
+        for _v in all_videos:
+            auto_index_youtube_video(_v.id, _v.title, _v.url or "", _v.embed_url)
+        logger.info("YouTube auto-index scheduled for %d existing videos", len(all_videos))
+    except Exception as _yt_err:
+        logger.warning("YouTube auto-index startup skipped: %s", _yt_err)
 
     logger.info("Saarthi backend started: PostgreSQL ready, AI in-process (src/ graph)")
     yield

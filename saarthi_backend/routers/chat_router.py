@@ -66,6 +66,8 @@ async def chat_message(body: ChatMessageRequest):
         body.message, history,
         context_material_title=body.contextMaterialTitle,
         course_id=body.courseId,
+        context_video_id=body.contextVideoId,
+        context_video_title=body.contextVideoTitle,
     )
     return ChatMessageResponse(response=answer)
 
@@ -85,10 +87,13 @@ async def stream_message(
     history = [{"role": m.role, "content": m.content} for m in body.conversationHistory]
 
     from saarthi_backend.ai.adapter import run_chat_stream
-    from saarthi_backend.service.chat_service import _apply_document_context
+    from saarthi_backend.service.chat_service import _apply_document_context, _apply_video_context
     from saarthi_backend.dao import ChatMessageDAO, ConversationDAO
 
-    prompt, is_grounded = _apply_document_context(body.message, body.contextMaterialTitle, course_id=body.courseId)
+    if body.contextVideoId:
+        prompt, is_grounded = _apply_video_context(body.message, body.contextVideoId, body.contextVideoTitle)
+    else:
+        prompt, is_grounded = _apply_document_context(body.message, body.contextMaterialTitle, course_id=body.courseId)
 
     async def event_generator():
         import asyncio
