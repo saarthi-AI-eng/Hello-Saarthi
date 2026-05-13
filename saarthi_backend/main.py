@@ -122,6 +122,20 @@ async def lifespan(app: FastAPI):
     except Exception as _kb_err:
         logger.warning("KB startup sync skipped: %s", _kb_err)
 
+    # Auto-index YouTube transcripts for any existing videos that don't have one yet.
+    try:
+        from saarthi_backend.service.indexing_service import auto_index_youtube_video
+        from saarthi_backend.model.video_model import Video
+        from sqlalchemy import select
+        async with session_factory() as _s:
+            result = await _s.execute(select(Video))
+            all_videos = result.scalars().all()
+        for _v in all_videos:
+            auto_index_youtube_video(_v.id, _v.title, _v.url or "", _v.embed_url)
+        logger.info("YouTube auto-index scheduled for %d existing videos", len(all_videos))
+    except Exception as _yt_err:
+        logger.warning("YouTube auto-index startup skipped: %s", _yt_err)
+
     logger.info("Saarthi backend started: PostgreSQL ready, AI in-process (src/ graph)")
     yield
     await engine.dispose()

@@ -159,6 +159,58 @@ def index_material_background(
 _VIDEO_KB_ROOT = Path("knowledge_base") / "videos"
 
 
+def _extract_youtube_id(url: str) -> str | None:
+    """Pull the 11-char video ID from any YouTube URL or embed URL."""
+    import re
+    patterns = [
+        r"(?:v=|/v/|youtu\.be/|/embed/|/shorts/)([A-Za-z0-9_-]{11})",
+    ]
+    for p in patterns:
+        m = re.search(p, url or "")
+        if m:
+            return m.group(1)
+    return None
+
+
+def fetch_youtube_transcript(url: str) -> str:
+    """
+    Fetch the auto-generated or manual transcript from YouTube.
+    Returns plain text, or empty string if unavailable.
+    """
+    video_id = _extract_youtube_id(url)
+    if not video_id:
+        return ""
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        segments = YouTubeTranscriptApi.get_transcript(video_id)
+        return " ".join(s["text"] for s in segments if s.get("text"))
+    except Exception as e:
+        logger.warning("YouTube transcript fetch failed for %s: %s", video_id, e)
+        return ""
+
+
+def auto_index_youtube_video(video_id: int, video_title: str, url: str, embed_url: str | None = None) -> None:
+    """
+    Fire-and-forget: if the video is a YouTube video and has no index yet,
+    fetch its transcript and index it automatically.
+    """
+    index_path = _VIDEO_KB_ROOT / str(video_id) / "vector_store"
+    if (index_path / "index.faiss").exists():
+        return  # already indexed
+
+    yt_url = embed_url or url
+    def _run():
+        text = fetch_youtube_transcript(yt_url)
+        if text:
+            logger.info("Auto-fetched YouTube transcript for video %d (%d chars)", video_id, len(text))
+            _index_video_transcript_sync(video_id, video_title, text)
+        else:
+            logger.info("No YouTube transcript available for video %d", video_id)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
 def _index_video_transcript_sync(video_id: int, video_title: str, transcript_text: str) -> bool:
     """Blocking: chunk, embed, and store a video transcript into a per-video FAISS index."""
     try:

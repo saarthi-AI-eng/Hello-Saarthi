@@ -126,6 +126,9 @@ async def create_video(
         sort_order=body.sortOrder,
     )
     await db.commit()
+    # Auto-fetch YouTube transcript in background — no admin action needed
+    from saarthi_backend.service.indexing_service import auto_index_youtube_video
+    auto_index_youtube_video(v.id, v.title, v.url or "", v.embed_url)
     return _video_to_response(v)
 
 
