@@ -65,7 +65,7 @@ def run_expert(expert_name: str, query: str, mode: str = "fast", messages: List[
                       "If the answer is NOT in the context, you MUST set 'is_knowledge_present' to False " \
                       "and return a generic 'I do not have this information in my notes' message."
 
-    llm = ChatOpenAI(model="gpt-4.1", temperature=0)
+    llm = ChatOpenAI(model="gpt-4.1", temperature=0, max_tokens=3000)
     structured_llm = llm.with_structured_output(ExpertResponse, method="json_schema", strict=True)
     history = _build_history_messages(messages)
 
@@ -149,8 +149,36 @@ def run_expert(expert_name: str, query: str, mode: str = "fast", messages: List[
         expert_response = structured_llm.invoke(final_messages)
         return expert_response, react_trace
 
+    elif mode == "rag":
+        # Single FAISS retrieval → one structured LLM call. Fast AND grounded.
+        retriever = get_retriever(expert_name)
+        if retriever:
+            try:
+                docs = retriever.invoke(query)
+                kb_context = "\n\n".join(d.page_content for d in docs)
+            except Exception as e:
+                logger.warning("RAG retrieval failed for %s: %s", expert_name, e)
+                kb_context = ""
+        else:
+            kb_context = ""
+
+        if kb_context:
+            augmented = (
+                f"Relevant excerpts from the knowledge base:\n{kb_context}\n\n"
+                f"User question: {query}"
+            )
+        else:
+            augmented = query
+
+        lc_messages = (
+            [SystemMessage(content=f"{prompt_str}\nYou must respond as {expert_name}.")]
+            + history
+            + [HumanMessage(content=augmented)]
+        )
+        return structured_llm.invoke(lc_messages), []
+
     else:
-        # Fast mode: Direct Structured LLM call (no ReAct)
+        # Fast mode: Direct Structured LLM call (no ReAct, no retrieval)
         lc_messages = (
             [SystemMessage(content=f"{prompt_str}\nYou must respond as {expert_name}.")]
             + history
@@ -162,10 +190,10 @@ from src.utils.state import AgentState
 
 def notes_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    res, trace = run_expert("notes_agent", query, mode="planning", messages=state.get("messages", []))
+    res, trace = run_expert("notes_agent", query, mode="rag", messages=state.get("messages", []))
     return {"results": {"notes_agent": res, "notes_agent_trace": trace}}
 
 def books_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    res, trace = run_expert("books_agent", query, mode="planning", messages=state.get("messages", []))
+    res, trace = run_expert("books_agent", query, mode="rag", messages=state.get("messages", []))
     return {"results": {"books_agent": res, "books_agent_trace": trace}}

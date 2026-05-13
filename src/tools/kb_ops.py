@@ -200,4 +200,6 @@ def get_expert_description(expert_name: str) -> str:
         return "Video Agent: Specialized in answering questions from video lecture transcripts on signals and systems. Use this when the user asks about lecture content, concepts explained in video lectures, or video-based tutorials."
     if "data_analysis_agent" in expert_name:
         return "Data Analysis Agent: Specialized in analyzing uploaded CSV datasets using pandas and numpy. Use this when the user asks to analyze data, explore a dataset, compute statistics, filter rows, find correlations, or any data-related query. Also use this when the user mentions 'data', 'CSV', 'dataset', 'analyze', 'plot', 'statistics', 'columns', or 'rows'."
+    if "web_agent" in expert_name:
+        return "Web Agent: Searches the internet for up-to-date information. Use this ONLY when the topic is clearly outside the course materials — e.g., current events, general programming questions, or topics the other agents could not answer. Prefer course-specific agents first."
     return "General Assistant"

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re as _re
 import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _WORKFLOW = create_graph()
 AI_REQUEST_TIMEOUT = 120
+
 
 
 def _invoke_graph_sync(query: str, messages: list[dict], mind_mode: bool = False) -> dict:
@@ -39,7 +41,7 @@ def _extract_answer(final_state: dict) -> str:
     mind_res = results.get("mind_agent")
     if mind_res is not None and hasattr(mind_res, "content"):
         return (mind_res.content or "").strip()
-    for key in ("notes_agent", "books_agent", "calculator_agent", "saarthi_agent", "video_agent", "data_analysis_agent"):
+    for key in ("notes_agent", "books_agent", "calculator_agent", "saarthi_agent", "video_agent", "data_analysis_agent", "web_agent"):
         res = results.get(key)
         if res is not None and hasattr(res, "content"):
             content = (res.content or "").strip()
@@ -56,8 +58,6 @@ def _extract_answer(final_state: dict) -> str:
     return "I couldn't generate a response. Please try again."
 
 
-import re as _re
-
 _ARTIFACT_PATTERNS = [
     # Internal kb labels
     _re.compile(r'\[Knowledge\s+[Bb]ase\s+[Aa]nswer\]', _re.IGNORECASE),
@@ -69,10 +69,8 @@ _ARTIFACT_PATTERNS = [
     _re.compile(r"I\s+do\s+not\s+have\s+this\s+information\s+in\s+my\s+(?:notes|knowledge base|context)[^.]*\.", _re.IGNORECASE),
     # "No relevant information found in this knowledge base"
     _re.compile(r"No\s+relevant\s+information\s+(?:was\s+)?found\s+in\s+(?:this\s+)?(?:the\s+)?knowledge\s+base[^.]*\.", _re.IGNORECASE),
-    # "Sources:" section — everything from Sources: to end or next heading
-    _re.compile(r'^Sources?:\s*\n(?:.*\n)*?(?=\n#|\Z)', _re.MULTILINE | _re.IGNORECASE),
-    # "References:" section
-    _re.compile(r'^References?:\s*\n(?:.*\n)*?(?=\n#|\Z)', _re.MULTILINE | _re.IGNORECASE),
+    # "Sources:" / "References:" section — strip from header to end regardless of position
+    _re.compile(r'\s*(?:Sources?|References?):\s*\n.*', _re.IGNORECASE | _re.DOTALL),
     # Inline numbered citations [1], [2], [1,2] etc.
     _re.compile(r'\[\d+(?:,\s*\d+)*\]'),
     # "[Source: ...]" labels
@@ -113,6 +111,35 @@ _TUTOR_SYSTEM = (
 )
 
 
+
+
+async def _direct_gpt_call(query: str, conversation_history: list[dict]) -> str:
+    """Fallback: single direct GPT-4.1 call when LangGraph returns empty."""
+    try:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        messages = [{"role": "system", "content": _TUTOR_SYSTEM}]
+        for m in conversation_history[-8:]:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": query})
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model="gpt-4.1",
+                messages=messages,
+                temperature=0.4,
+                max_tokens=3000,
+            ),
+            timeout=AI_REQUEST_TIMEOUT,
+        )
+        return _clean_response((response.choices[0].message.content or "").strip())
+    except Exception as e:
+        logger.exception("Direct GPT fallback failed: %s", e)
+        return "Something went wrong while generating a response. Please try again."
+
+
 async def run_chat(
     query: str,
     conversation_history: list[dict],
@@ -134,27 +161,17 @@ async def run_chat(
             logger.exception("Mind mode failed: %s", e)
             return "Something went wrong. Please try again."
 
-    # Standard chat — single direct GPT-4.1 call, no multi-agent overhead
+    # All queries go through LangGraph — router handles intent correctly
+    loop = asyncio.get_running_loop()
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-        messages = [{"role": "system", "content": _TUTOR_SYSTEM}]
-        for m in conversation_history[-8:]:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-            if role in ("user", "assistant") and content:
-                messages.append({"role": role, "content": content})
-        messages.append({"role": "user", "content": query})
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model="gpt-4.1",
-                messages=messages,
-                temperature=0.4,
-                max_tokens=1200,
-            ),
+        final_state = await asyncio.wait_for(
+            loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, False),
             timeout=AI_REQUEST_TIMEOUT,
         )
-        return _clean_response((response.choices[0].message.content or "").strip())
+        answer = _clean_response(_extract_answer(final_state))
+        if answer:
+            return answer
+        return await _direct_gpt_call(query, conversation_history)
     except asyncio.TimeoutError:
         logger.warning("AI chat timed out")
         return "The request took too long. Please try a shorter question."
@@ -201,7 +218,7 @@ async def run_document_chat(
                 model="gpt-4.1",
                 messages=messages,
                 temperature=0.1,
-                max_tokens=1024,
+                max_tokens=2000,
             ),
             timeout=AI_REQUEST_TIMEOUT,
         )
@@ -224,22 +241,24 @@ async def run_chat_stream(
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 
-        if mind_mode:
-            # Mind mode: run graph first, then stream result word-by-word
-            loop = asyncio.get_running_loop()
-            final_state = await asyncio.wait_for(
-                loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, mind_mode),
-                timeout=AI_REQUEST_TIMEOUT,
-            )
-            answer = _clean_response(_extract_answer(final_state))
-            for i, word in enumerate(answer.split(" ")):
-                chunk = word + (" " if i < len(answer.split(" ")) - 1 else "")
+        # All queries go through LangGraph — router handles intent correctly
+        loop = asyncio.get_running_loop()
+        final_state = await asyncio.wait_for(
+            loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, mind_mode),
+            timeout=AI_REQUEST_TIMEOUT,
+        )
+        answer = _clean_response(_extract_answer(final_state))
+
+        if answer:
+            words = answer.split(" ")
+            for i, word in enumerate(words):
+                chunk = word + (" " if i < len(words) - 1 else "")
                 yield f"data: {chunk.replace(chr(10), chr(92) + 'n')}\n\n"
                 await asyncio.sleep(0.008)
             yield "data: [DONE]\n\n"
             return
 
-        # Standard chat — real OpenAI token streaming, first token in ~1s
+        # Graph returned empty — fall back to real OpenAI token streaming
         messages = [{"role": "system", "content": _TUTOR_SYSTEM}]
         for m in conversation_history[-8:]:
             role = m.get("role", "user")
@@ -248,18 +267,16 @@ async def run_chat_stream(
                 messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": query})
 
-        full_response: list[str] = []
         stream = await client.chat.completions.create(
             model="gpt-4.1",
             messages=messages,
             temperature=0.4,
-            max_tokens=1200,
+            max_tokens=3000,
             stream=True,
         )
         async for chunk in stream:
             delta = chunk.choices[0].delta.content if chunk.choices else None
             if delta:
-                full_response.append(delta)
                 yield f"data: {delta.replace(chr(10), chr(92) + 'n')}\n\n"
         yield "data: [DONE]\n\n"
 
