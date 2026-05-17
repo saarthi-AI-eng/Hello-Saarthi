@@ -23,7 +23,7 @@ AI_REQUEST_TIMEOUT = 120
 
 
 
-def _invoke_graph_sync(query: str, messages: list[dict], mind_mode: bool = False) -> dict:
+def _invoke_graph_sync(query: str, messages: list[dict], mind_mode: bool = False, planning: bool = False) -> dict:
     state: AgentState = {
         "query": query,
         "messages": messages,
@@ -31,9 +31,55 @@ def _invoke_graph_sync(query: str, messages: list[dict], mind_mode: bool = False
         "current_expert": None,
         "results": {},
         "mind_mode": mind_mode,
+        "planning": planning,
         "next_step": "",
     }
     return dict(_WORKFLOW.invoke(state))
+
+
+def _extract_citations(final_state: dict) -> list[dict]:
+    """Extract citations and react traces from all agent results."""
+    import json as _json
+    results = final_state.get("results") or {}
+    citations = []
+    react_steps = []
+
+    # Mind agent has numbered references
+    mind_res = results.get("mind_agent")
+    if mind_res is not None and hasattr(mind_res, "references"):
+        for ref in (mind_res.references or []):
+            citations.append({
+                "number": getattr(ref, "number", None),
+                "source_agent": getattr(ref, "source_agent", ""),
+                "source_file": getattr(ref, "source_file", ""),
+                "snippet": getattr(ref, "snippet", ""),
+            })
+
+    # RAG agents have sources + react traces
+    for key in ("notes_agent", "books_agent", "video_agent"):
+        res = results.get(key)
+        if res is None:
+            continue
+        for src in (getattr(res, "sources", None) or []):
+            citations.append({
+                "agent": key,
+                "source_file": getattr(src, "source_file", ""),
+                "page_number": getattr(src, "page_number", None),
+                "snippet": getattr(src, "snippet", ""),
+            })
+        # Trace is stored as {expert_name}_trace in results dict
+        trace = results.get(f"{key}_trace") or []
+        for step in trace:
+            if isinstance(step, dict):
+                react_steps.append({
+                    "agent": key,
+                    "step": step.get("step"),
+                    "thought": step.get("thought", ""),
+                    "tools_called": step.get("tools_called", []),
+                    "observations": step.get("observations", []),
+                })
+
+    return {"citations": citations, "react_steps": react_steps}
 
 
 def _extract_answer(final_state: dict) -> str:
@@ -287,6 +333,7 @@ async def run_chat_stream(
     query: str,
     conversation_history: list[dict],
     mind_mode: bool = False,
+    planning: bool = False,
 ) -> AsyncGenerator[str, None]:
     """True token-by-token streaming via OpenAI stream=True."""
     try:
@@ -296,10 +343,13 @@ async def run_chat_stream(
         # All queries go through LangGraph — router handles intent correctly
         loop = asyncio.get_running_loop()
         final_state = await asyncio.wait_for(
-            loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, mind_mode),
+            loop.run_in_executor(None, _invoke_graph_sync, query, conversation_history, mind_mode, planning),
             timeout=AI_REQUEST_TIMEOUT,
         )
         answer = _clean_response(_extract_answer(final_state))
+        logger.info("final_state results keys: %s", list((final_state.get("results") or {}).keys()))
+        meta = _extract_citations(final_state)
+        logger.info("meta citations=%d react_steps=%d", len(meta["citations"]), len(meta["react_steps"]))
 
         if answer:
             words = answer.split(" ")
@@ -308,6 +358,9 @@ async def run_chat_stream(
                 yield f"data: {chunk.replace(chr(10), chr(92) + 'n')}\n\n"
                 await asyncio.sleep(0.008)
             yield "data: [DONE]\n\n"
+            if meta["citations"] or meta["react_steps"]:
+                import json as _json
+                yield f"event: meta\ndata: {_json.dumps(meta)}\n\n"
             return
 
         # Graph returned empty — fall back to real OpenAI token streaming

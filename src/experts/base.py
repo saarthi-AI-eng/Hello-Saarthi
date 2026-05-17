@@ -190,10 +190,12 @@ from src.utils.state import AgentState
 
 def notes_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    res, trace = run_expert("notes_agent", query, mode="rag", messages=state.get("messages", []))
+    mode = "planning" if state.get("planning", False) else "rag"
+    res, trace = run_expert("notes_agent", query, mode=mode, messages=state.get("messages", []))
     return {"results": {"notes_agent": res, "notes_agent_trace": trace}}
 
 def books_agent_node(state: AgentState):
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    res, trace = run_expert("books_agent", query, mode="rag", messages=state.get("messages", []))
+    mode = "planning" if state.get("planning", False) else "rag"
+    res, trace = run_expert("books_agent", query, mode=mode, messages=state.get("messages", []))
     return {"results": {"books_agent": res, "books_agent_trace": trace}}

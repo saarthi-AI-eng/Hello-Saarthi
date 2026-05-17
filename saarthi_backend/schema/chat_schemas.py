@@ -35,6 +35,7 @@ class StreamMessageRequest(BaseModel):
     courseId: Optional[int] = None
     contextVideoId: Optional[int] = None
     contextVideoTitle: Optional[str] = None
+    planning: bool = Field(False, description="If true, use ReAct planning mode (slower, shows thinking).")
 
 
 # ─── Study Plan ───────────────────────────────────────────────────────────────

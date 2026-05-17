@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,6 +76,7 @@ async def chat_message(body: ChatMessageRequest):
 
 @router.post("/stream")
 async def stream_message(
+    request: Request,
     body: StreamMessageRequest,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -84,11 +85,19 @@ async def stream_message(
     Stream an AI response token-by-token via Server-Sent Events.
     Also persists the full exchange to the conversation when complete.
     """
-    history = [{"role": m.role, "content": m.content} for m in body.conversationHistory]
+    raw_history = [{"role": m.role, "content": m.content} for m in body.conversationHistory]
 
     from saarthi_backend.ai.adapter import run_chat_stream
     from saarthi_backend.service.chat_service import _apply_document_context, _apply_video_context
+    from saarthi_backend.service.memory_service import build_context, maybe_update_summary_bg
     from saarthi_backend.dao import ChatMessageDAO, ConversationDAO
+
+    # Build memory-trimmed context (Tier 1 + Tier 2 summary injection)
+    conv_id_int = int(body.conversationId) if body.conversationId else None
+    if conv_id_int:
+        history = await build_context(db, conv_id_int, raw_history)
+    else:
+        history = raw_history[-6:]
 
     if body.contextVideoId:
         prompt, is_grounded = _apply_video_context(body.message, body.contextVideoId, body.contextVideoTitle)
@@ -109,23 +118,32 @@ async def stream_message(
                 await asyncio.sleep(0.012)
             yield "data: [DONE]\n\n"
         else:
-            async for chunk in run_chat_stream(prompt, history):
+            async for chunk in run_chat_stream(prompt, history, planning=body.planning):
                 yield chunk
                 if chunk.startswith("data: ") and not chunk.startswith("data: ["):
                     token = chunk[6:].rstrip("\n").replace("\\n", "\n")
                     full_response.append(token)
 
-        # Persist to DB after streaming completes
+        # Persist to DB after streaming completes, then trigger lazy summarization
         try:
-            if body.conversationId:
-                conv_id = int(body.conversationId)
-                conv = await ConversationDAO.get_by_id(db, conv_id, user.id)
+            if conv_id_int:
+                conv = await ConversationDAO.get_by_id(db, conv_id_int, user.id)
                 if conv:
-                    await ChatMessageDAO.create(db, conv_id, "user", body.message)
+                    await ChatMessageDAO.create(db, conv_id_int, "user", body.message)
                     assistant_content = "".join(full_response)
-                    await ChatMessageDAO.create(db, conv_id, "assistant", assistant_content)
-                    await ConversationDAO.touch(db, conv_id)
+                    await ChatMessageDAO.create(db, conv_id_int, "assistant", assistant_content)
+                    await ConversationDAO.touch(db, conv_id_int)
                     await db.commit()
+
+                    # Lazy memory update — runs after response is fully sent, never blocks user
+                    # Uses a fresh DB session (not the request-scoped one) to avoid asyncpg conflict
+                    try:
+                        all_msgs = await ChatMessageDAO.list_by_conversation(db, conv_id_int)
+                        session_factory = request.app.state.db_session_factory
+                        asyncio.ensure_future(maybe_update_summary_bg(session_factory, conv_id_int, all_msgs))
+                    except Exception as mem_err:
+                        import logging
+                        logging.getLogger(__name__).debug("Memory update skipped: %s", mem_err)
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning("Failed to persist streamed message: %s", e)

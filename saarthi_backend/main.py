@@ -1,5 +1,6 @@
 """Saarthi Backend - FastAPI app entry point."""
 
+import logging
 import os
 import sys
 import time
@@ -64,6 +65,14 @@ from saarthi_backend.utils.rate_limit import (
 )
 
 logger = get_logger(__name__)
+
+# Configure root logger so src/ AI graph logs are visible
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    stream=sys.stdout,
+)
+logging.getLogger("src").setLevel(logging.INFO)
 
 # Dev-only: set SAARTHI_DEV_AUTOCREATE_TABLES=1 to create tables from ORM (otherwise use migrations)
 _DEV_AUTOCREATE_TABLES = os.getenv("SAARTHI_DEV_AUTOCREATE_TABLES", "").lower() in ("1", "true", "yes")
@@ -132,6 +141,9 @@ async def lifespan(app: FastAPI):
         await seed_demo_users(session)
     async with session_factory() as session:
         await seed_code_problems(session)
+    async with session_factory() as session:
+        from saarthi_backend.scripts.seed_study_guides import seed_study_guides
+        await seed_study_guides(session)
 
     # Sync FAISS knowledge-base indexes from Supabase Storage on startup.
     # If local indexes already exist they are used as-is (no download).
@@ -180,12 +192,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Explicit OPTIONS handler — returns 200 for all preflight requests before any other middleware
+from fastapi.responses import Response as _Response
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str):
+    return _Response(status_code=200)
+
 # Request ID middleware: set request_id on request.state and add X-Request-ID to response
 REQUEST_ID_HEADER = "X-Request-ID"
 
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
     request_id = request.headers.get(REQUEST_ID_HEADER) or uuid_mod.uuid4().hex
     request.state.request_id = request_id
     response = await call_next(request)
@@ -235,6 +255,8 @@ async def rate_limit_middleware(request: Request, call_next):
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     """Log request method, path, status, duration, request_id."""
+    if request.method == "OPTIONS":
+        return await call_next(request)
     start = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start) * 1000
