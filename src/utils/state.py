@@ -11,4 +11,5 @@ class AgentState(TypedDict):
     current_expert: Optional[str]
     results: Dict[str, Any] # Values can be ExpertResponse objects
     mind_mode: bool
+    planning: bool
     next_step: str

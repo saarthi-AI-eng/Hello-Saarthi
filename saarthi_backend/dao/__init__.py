@@ -16,6 +16,7 @@ from .video_dao import VideoDAO, VideoProgressDAO, VideoNoteDAO
 from .quiz_dao import QuizDAO, QuizQuestionDAO, QuizAttemptDAO
 from .note_dao import NoteDAO
 from .notification_dao import NotificationDAO
+from .study_guide_dao import StudyGuideDAO, StudyGuidePromptDAO
 
 __all__ = [
     "ConversationDAO",
@@ -38,4 +39,6 @@ __all__ = [
     "QuizAttemptDAO",
     "NoteDAO",
     "NotificationDAO",
+    "StudyGuideDAO",
+    "StudyGuidePromptDAO",
 ]

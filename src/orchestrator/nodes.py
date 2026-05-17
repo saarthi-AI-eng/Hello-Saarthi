@@ -47,7 +47,8 @@ def orchestrator_node(state: AgentState):
                     trace = []
                 else:
                     from src.experts.base import run_expert
-                    res, trace = run_expert(expert_name, sub_query, mode="rag",
+                    mode = "planning" if state.get("planning", False) else "rag"
+                    res, trace = run_expert(expert_name, sub_query, mode=mode,
                                            messages=state.get("messages", []))
 
                 combined_results[expert_name] = res

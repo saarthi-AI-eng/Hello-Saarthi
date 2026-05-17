@@ -8,6 +8,7 @@ from .note_model import Note
 from .notification_model import Notification
 from .chat_model import Conversation, ChatMessage
 from .code_problem_model import CodeProblem
+from .study_guide_model import StudyGuide, StudyGuidePrompt
 
 __all__ = [
     "Base",
@@ -31,4 +32,6 @@ __all__ = [
     "Note",
     "Notification",
     "CodeProblem",
+    "StudyGuide",
+    "StudyGuidePrompt",
 ]
