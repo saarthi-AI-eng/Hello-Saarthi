@@ -8,7 +8,7 @@
 ## 📸 Application Screenshots
 
 ### Student Dashboard
-![Student Dashboard — Shows the personalized student view with stats cards, enrolled courses progress, upcoming deadlines, streak tracking, and the full navigation sidebar.](studentpage.png)
+![Student Dashboard — Shows the personalized student view with stats cards, enrolled courses progress, upcoming deadlines, streak tracking, and the full navigation sidebar.](https://github.com/saarthi-AI-eng/Hello-Saarthi/blob/frontend1/docs/studentpage.png)
 
 The **Student Dashboard** is the primary landing page after login. It displays:
 - **Welcome banner** with the student's name and current learning streak (4 Day Streak 🔥)
@@ -22,7 +22,7 @@ The **Student Dashboard** is the primary landing page after login. It displays:
 ---
 
 ### Admin / Instructor Dashboard
-![Admin Dashboard — Shows the instructor/admin view with management capabilities, the same dashboard layout, and admin-level navigation.](adminpage.png)
+![Admin Dashboard — Shows the instructor/admin view with management capabilities, the same dashboard layout, and admin-level navigation.](https://github.com/saarthi-AI-eng/Hello-Saarthi/blob/frontend1/docs/adminpage.pngage.png)
 
 The **Admin/Instructor Dashboard** shares the same layout but provides elevated access:
 - Logged in as **Prof. Admin** with the `Admin` role badge in the top-right profile area
