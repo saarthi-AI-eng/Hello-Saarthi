@@ -1,0 +1,39 @@
+/* ================================================
+   APP SHELL LAYOUT
+   ================================================ */
+.app-shell {
+    display: flex;
+    min-height: 100vh;
+}
+
+.app-main {
+    flex: 1;
+    margin-left: 260px;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    transition: margin-left 0.3s ease;
+    background: var(--background);
+}
+
+.sidebar-collapsed~.app-main,
+.sidebar-collapsed+.app-main {
+    margin-left: 72px;
+}
+
+.app-content {
+    flex: 1;
+    padding: 1.5rem;
+    overflow-y: auto;
+    background: var(--background);
+}
+
+@media (max-width: 768px) {
+    .app-main {
+        margin-left: 0;
+    }
+
+    .app-content {
+        padding: 1rem;
+    }
+}

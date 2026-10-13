@@ -21,6 +21,12 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
+# retrieve(), kb_ops and the admin KB routes use paths relative to the project root
+# (knowledge_base/, kb_status.json, ...). The README starts the server from inside
+# saarthi_backend/, which made retrieval read saarthi_backend/knowledge_base (empty)
+# while indexing wrote elsewhere. Pin the working directory to the project root.
+os.chdir(_root)
+
 # Load .env into os.environ so LangChain/OpenAI see OPENAI_API_KEY (Settings alone doesn't set env)
 _backend_dir = Path(__file__).resolve().parent
 _env_file = _backend_dir / ".env"
@@ -89,6 +95,15 @@ def _validate_settings_at_startup() -> None:
         )
 
 
+def _load_classroom_invites_ddl() -> list[str]:
+    sql = (_backend_dir / "migrations" / "008_classroom_invites.sql").read_text(encoding="utf-8")
+    body = "\n".join(line for line in sql.splitlines() if not line.strip().startswith("--"))
+    return [s.strip() for s in body.split(";") if s.strip()]
+
+
+_CLASSROOM_INVITES_DDL = _load_classroom_invites_ddl()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: PostgreSQL, optional dev table creation. Shutdown: dispose. AI runs in-process (src/ graph)."""
@@ -127,8 +142,12 @@ async def lifespan(app: FastAPI):
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
         """))
+        # Invites / class codes had an ORM model but no migration (see 008_classroom_invites.sql).
+        for stmt in _CLASSROOM_INVITES_DDL:
+            await conn.execute(text(stmt))
     logger.info("Column migration: saarthi_videos.transcript_text ensured")
     logger.info("Table migration: saarthi_code_problems ensured")
+    logger.info("Table migration: saarthi_classroom_invites ensured")
     session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,

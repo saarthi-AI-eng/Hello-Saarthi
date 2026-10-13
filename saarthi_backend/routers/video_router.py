@@ -125,6 +125,16 @@ async def create_video(
         chapters_json=body.chaptersJson,
         sort_order=body.sortOrder,
     )
+    if body.courseId:
+        from saarthi_backend.service import course_service
+        await course_service.create_stream_item(
+            db,
+            course_id=body.courseId,
+            description=v.title,
+            author=user.full_name or "Instructor",
+            type="video",
+            title=f"{user.full_name or 'Instructor'} posted a new video lecture:",
+        )
     await db.commit()
     # Auto-fetch YouTube transcript in background — no admin action needed
     from saarthi_backend.service.indexing_service import auto_index_youtube_video

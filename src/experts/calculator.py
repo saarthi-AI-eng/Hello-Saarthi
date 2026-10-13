@@ -1,4 +1,4 @@
-from langchain_openai import ChatOpenAI
+from src.utils.llm import chat_llm
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 import numexpr
@@ -119,7 +119,7 @@ def run_calculator_agent(query: str, messages: list = []) -> tuple:
     """
     logger.info(f"--- Running Calculator Agent for: {query} ---")
 
-    llm = ChatOpenAI(model="gpt-4.1", temperature=0)
+    llm = chat_llm(temperature=0)
     tools = [calculate, python_math]
     llm_with_tools = llm.bind_tools(tools)
     tool_map = {t.name: t for t in tools}

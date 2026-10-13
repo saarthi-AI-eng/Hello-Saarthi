@@ -171,8 +171,8 @@ async def generate_adaptive_quiz(
 ) -> AdaptiveQuizResponse:
     """Use GPT-4.1 to generate an adaptive quiz based on past attempt analysis."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        from src.utils.llm import async_openai, chat_model_name
+        client = async_openai()
 
         # Analyze past performance
         avg_score = 0.0
@@ -208,7 +208,7 @@ Focus on making questions that test deep understanding, not just memorization.
 For engineering students studying signals, systems, ML, or algorithms."""
 
         response = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[
                 {"role": "system", "content": _QUIZ_GEN_SYSTEM},
                 {"role": "user", "content": user_prompt},

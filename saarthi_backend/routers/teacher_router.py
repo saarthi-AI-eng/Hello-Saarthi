@@ -26,10 +26,12 @@ from saarthi_backend.service import course_service
 from saarthi_backend.service.indexing_service import index_material_background
 
 logger = logging.getLogger(__name__)
+from src.utils.llm import async_openai, chat_model_name
 
 router = APIRouter(prefix="/teacher", tags=["teacher"])
 
-_UPLOAD_DIR = Path("uploads")
+# Same folder main.py serves at /uploads and course_router reads from.
+_UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 _ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt"}
 _MAX_MB = 20
 
@@ -49,6 +51,7 @@ class CoursePreview(BaseModel):
     description: str
     topics: list[TopicPreview] = []
     sourceFileUrl: str | None = None   # the uploaded PDF to add as a material
+    sourceFileName: str | None = None  # original filename, used as the material title
 
 
 class VideoPreview(BaseModel):
@@ -99,6 +102,21 @@ class ExecuteMaterialRequest(BaseModel):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _material_type(ext: str) -> str:
+    if ext == ".pdf":
+        return "pdf"
+    if ext in (".ppt", ".pptx"):
+        return "slide"
+    return "doc"
+
+
+def _parse_course_id(raw: str | None) -> int:
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Pick a course first")
+
 
 def _require_teacher(user: User) -> None:
     if user.role not in ("admin", "teacher"):
@@ -221,16 +239,34 @@ def _extract_pdf_text_sync(content: bytes, filename: str) -> str:
                         break
                 return "\n".join(texts)[:80_000]
         except Exception as e:
+            logger.info("pdfplumber unavailable/failed (%s); trying pypdf", e)
+        # fallback: pypdf (the only PDF parser pinned in requirements.txt)
+        try:
+            import io
+            from pypdf import PdfReader
+            texts = []
+            for page in PdfReader(io.BytesIO(content)).pages:
+                texts.append(page.extract_text() or "")
+                if sum(len(x) for x in texts) > 80_000:
+                    break
+            return "\n".join(texts)[:80_000]
+        except Exception as e:
             logger.warning("PDF extraction failed: %s", e)
             return ""
+    if ext in (".docx", ".pptx"):
+        import tempfile
+        from saarthi_backend.service.indexing_service import _extract_segments
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / f"upload{ext}"
+            path.write_bytes(content)
+            return "\n".join(t for _, t in _extract_segments(path))[:80_000]
     return ""
 
 
 async def _ai_parse_syllabus(text: str, instructor_name: str) -> CoursePreview | None:
     """Send syllabus text to Claude/GPT and get back structured course JSON."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        client = async_openai()
 
         prompt = (
             "You are helping a teacher set up their course on Saarthi.\n"
@@ -261,7 +297,7 @@ async def _ai_parse_syllabus(text: str, instructor_name: str) -> CoursePreview |
         )
 
         response = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=4000,
@@ -299,8 +335,8 @@ async def _ai_classify_message(message: str, courses: list[dict]) -> dict[str, A
 async def _ai_classify_message_with_file(message: str, filename: str, courses: list[dict]) -> dict[str, Any]:
     """Classify teacher intent when a file is also present."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        from src.utils.llm import async_openai, chat_model_name
+        client = async_openai()
 
         course_list = json.dumps([{"id": c["id"], "title": c["title"]} for c in courses[:10]])
         file_context = f'\nUploaded file: "{filename}"' if filename else ""
@@ -329,7 +365,7 @@ async def _ai_classify_message_with_file(message: str, filename: str, courses: l
         )
 
         response = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=300,
@@ -396,6 +432,7 @@ async def analyse(
                     preview.title = classification["courseName"]
                 # Always attach the uploaded file so it gets added as a material
                 preview.sourceFileUrl = file_url
+                preview.sourceFileName = file.filename
                 return AnalyseResponse(
                     intent="create_course",
                     question=None,
@@ -404,7 +441,7 @@ async def analyse(
 
         # Generic material upload
         title = Path(file.filename).stem.replace("_", " ").replace("-", " ").title()
-        mat_type = "pdf" if ext == ".pdf" else ("slide" if ext in (".ppt", ".pptx") else "doc")
+        mat_type = _material_type(ext)
         return AnalyseResponse(
             intent="add_material",
             question=classification.get("question"),
@@ -513,35 +550,39 @@ async def execute_create_course(
             db.add(mat)
             created_materials.append(mat_title)
 
-    # Always add the source PDF as a material if present
+    # Always add the source file as a material if present
+    source_mat = None
     if p.sourceFileUrl:
-        from pathlib import Path as _Path
-        pdf_title = _Path(p.sourceFileUrl).stem.replace("_", " ").replace("-", " ").title()
+        # The saved file is a uuid; title it after the teacher's original filename.
+        name_for_title = Path(p.sourceFileName or p.sourceFileUrl).stem
+        pdf_title = name_for_title.replace("_", " ").replace("-", " ").strip().title() or p.title
         source_mat = Material(
             course_id=course.id,
             title=pdf_title,
-            type="pdf",
+            type=_material_type(Path(p.sourceFileUrl).suffix.lower()),
             url=p.sourceFileUrl,
             description="Uploaded by teacher",
             topic="Course Materials",
         )
         db.add(source_mat)
         await db.flush()
-        # Trigger FAISS indexing
-        file_path = _Path("uploads") / _Path(p.sourceFileUrl).name
-        if file_path.exists():
-            import asyncio as _asyncio
-            _asyncio.create_task(
-                run_in_threadpool(
-                    index_material_background,
-                    str(file_path),
-                    course.id,
-                    source_mat.id,
-                    pdf_title,
-                )
-            )
+        await course_service.create_stream_item(
+            db,
+            course_id=course.id,
+            description=pdf_title,
+            author=user.full_name or "Instructor",
+            type="material",
+            title=f"{user.full_name or 'Instructor'} posted a new material:",
+        )
 
     await db.commit()
+
+    # Index after commit. The old call passed (path, course_id, material_id, title)
+    # to a (path, title, course_id, material_id) signature, so it never indexed.
+    if source_mat is not None:
+        file_path = _UPLOAD_DIR / Path(p.sourceFileUrl).name
+        if file_path.exists():
+            index_material_background(file_path, source_mat.title, course.id, source_mat.id)
 
     return {
         "courseId": str(course.id),
@@ -565,34 +606,47 @@ async def execute_playlist_import(
     """
     _require_teacher(user)
 
-    course_id = int(body.courseId)
+    course_id = _parse_course_id(body.courseId)
     course = await course_service.get_course(db, course_id)
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
     if course.owner_id != user.id and user.role != "admin":
         raise HTTPException(status_code=403, detail="Not your course")
 
-    added = []
-    for v in body.playlistPreview.videos:
-        embed_url = f"https://www.youtube.com/embed/{v.youtubeId}"
-        mat = Material(
-            course_id=course_id,
+    # Create real Video rows (course-linked) so they show on the course page and the
+    # Videos page, and so the transcript index is keyed by the video's own id.
+    # Previously these were Material rows whose ids were used as video ids,
+    # colliding with knowledge_base/videos/<id> of unrelated videos.
+    from saarthi_backend.service import video_service
+    from saarthi_backend.service.indexing_service import auto_index_youtube_video
+
+    created = []
+    for i, v in enumerate(body.playlistPreview.videos):
+        video = await video_service.create_video(
+            db,
             title=v.title,
-            type="link",
             url=v.url,
-            description="",
-            topic=body.topic or "",
+            course_id=course_id,
+            description=body.topic or body.playlistPreview.playlistTitle or "",
+            thumbnail_url=f"https://img.youtube.com/vi/{v.youtubeId}/hqdefault.jpg",
+            embed_url=f"https://www.youtube.com/embed/{v.youtubeId}",
+            sort_order=i,
         )
-        db.add(mat)
-        await db.flush()
-
-        # Auto-index transcript in background
-        from saarthi_backend.service.indexing_service import auto_index_youtube_video
-        auto_index_youtube_video(mat.id, v.title, v.url, embed_url)
-        added.append(v.title)
-
+        created.append(video)
+    if created:
+        await course_service.create_stream_item(
+            db,
+            course_id=course_id,
+            description=body.playlistPreview.playlistTitle or f"{len(created)} videos",
+            author=user.full_name or "Instructor",
+            type="video",
+            title=f"{user.full_name or 'Instructor'} added {len(created)} video lectures:",
+        )
     await db.commit()
-    return {"videosAdded": len(added), "titles": added}
+
+    for video in created:
+        auto_index_youtube_video(video.id, video.title, video.url or "", video.embed_url)
+    return {"videosAdded": len(created), "titles": [v.title for v in created]}
 
 
 # ── Endpoint 2c: Execute — add single material to course ────────────────────
@@ -608,7 +662,7 @@ async def execute_add_material(
     """
     _require_teacher(user)
 
-    course_id = int(body.courseId)
+    course_id = _parse_course_id(body.courseId)
     course = await course_service.get_course(db, course_id)
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
@@ -626,23 +680,21 @@ async def execute_add_material(
     )
     db.add(mat)
     await db.flush()
-
-    # Trigger FAISS indexing if it's a local file
-    if p.fileUrl and p.fileUrl.startswith("/uploads/"):
-        file_path = Path("uploads") / Path(p.fileUrl).name
-        if file_path.exists():
-            import asyncio
-            asyncio.create_task(
-                run_in_threadpool(
-                    index_material_background,
-                    str(file_path),
-                    course_id,
-                    mat.id,
-                    p.title,
-                )
-            )
-
+    await course_service.create_stream_item(
+        db,
+        course_id=course_id,
+        description=mat.title,
+        author=user.full_name or "Instructor",
+        type="material",
+        title=f"{user.full_name or 'Instructor'} posted a new material:",
+    )
     await db.commit()
+
+    # Trigger FAISS indexing if it's a local file (after commit, correct argument order)
+    if p.fileUrl and p.fileUrl.startswith("/uploads/"):
+        file_path = _UPLOAD_DIR / Path(p.fileUrl).name
+        if file_path.exists():
+            index_material_background(file_path, mat.title, course_id, mat.id)
     return {"materialId": str(mat.id), "title": mat.title, "courseId": str(course_id)}
 
 

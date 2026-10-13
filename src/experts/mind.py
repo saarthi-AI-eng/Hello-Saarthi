@@ -1,51 +1,18 @@
 import logging
 
 logger = logging.getLogger(__name__)
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+from src.utils.llm import chat_llm
 
 from src.utils.state import AgentState
 from src.schemas.models import MindAgentResponse
 from src.experts.base import run_expert
 
-MIND_SYSTEM_PROMPT = """You are the **Mind Agent** — the synthesis brain of the Saarthi AI Study Assistant.
-
-You receive answers from multiple expert agents (Notes Agent, Books Agent, Video Agent), each with their own sources and citations. Your job is to:
-
-1. **Merge & Synthesize** all provided answers into ONE comprehensive, clear, well-structured response.
-2. **Resolve contradictions** — if agents disagree, present the most accurate view and note the discrepancy.
-3. **Add inline citations** — Use numbered markers like [1], [2], [3] at relevant points in your text.
-4. **Be thorough** — Combine knowledge from all sources. Don't just pick one agent's answer.
-5. **Be educational** — Write in a clear, student-friendly way. Use examples, analogies, and step-by-step explanations.
-6. **MANDATORY MATH FORMATTING** — You MUST follow this exactly, no exceptions:
-
-WRONG (never output bare LaTeX):
-H(s) = \\frac{N(s)}{D(s)}
-X(z) = \\sum_{n=0}^{\\infty} x[n] z^{-n}
-
-CORRECT — always wrap in dollar signs:
-For inline variables: The transfer function $H(s)$ has poles at $s = -1$.
-For standalone equations on their own line:
-
-$$H(s) = \\frac{N(s)}{D(s)}$$
-
-$$X(z) = \\sum_{n=0}^{\\infty} x[n] z^{-n}$$
-
-Every backslash LaTeX command (\\frac, \\sum, \\int, \\alpha, \\cdots, etc.) MUST be inside $...$ or $$...$$. NEVER write a bare equation without dollar sign delimiters.
-
-For each citation marker [N], you MUST have a matching numbered entry in the references list with:
-- The source agent name (e.g., "Notes Agent", "Books Agent", "Video Agent")
-- The source file name
-- A brief snippet proving the citation
-
-Example output:
-"The Z-transform converts a discrete-time signal x[n] into a complex function X(z) [1]. The Region of Convergence (ROC) determines where this transform converges [2], and for a causal system, the ROC extends outward from the outermost pole [3]."
-
-With references:
-[1] Notes Agent — Z-Transform_page_1.txt — "The Z-transform is defined as..."
-[2] Books Agent — DSP_Chapter3.pdf — "The ROC is the set of z values..."
-[3] Video Agent — Lecture_3_transcript.txt — "For causal systems, we know that..."
-"""
+MIND_SYSTEM_PROMPT = """You are the Mind Agent of Saarthi. Merge the expert answers below into ONE clear answer for a student.
+- Use only what the experts found; drop "no information" sections; note real disagreements.
+- Put a numbered marker [1], [2] after each fact and give a matching reference (agent, file, short snippet).
+- Structure with ## headings; be educational and concise.
+- Math: every expression in LaTeX — $H(s)$ inline, $$...$$ on its own line; never bare LaTeX or Unicode math."""
 
 
 def mind_fan_out_node(state: AgentState):
@@ -56,15 +23,27 @@ def mind_fan_out_node(state: AgentState):
     logger.info(f"--- Mind Mode: Fan-out to all RAG agents for: {query} ---")
 
     agent_results = {}
-    for agent_name in ["notes_agent", "books_agent", "video_agent"]:
-        try:
-            logger.info(f"--- Querying {agent_name}... ---")
-            res, trace = run_expert(agent_name, query, mode="planning")
-            agent_results[agent_name] = res
-            agent_results[f"{agent_name}_trace"] = trace
-            logger.info(f"--- {agent_name}: confidence={res.confidence_score}, knowledge_present={res.is_knowledge_present} ---")
-        except Exception as e:
-            logger.error(f"--- {agent_name} failed: {e} ---")
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    import contextvars
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        # copy_context so the request's model tier / usage collector reach the workers
+        futs = {
+            pool.submit(contextvars.copy_context().run, run_expert, name, query, "planning"): name
+            for name in ("notes_agent", "books_agent", "video_agent")
+        }
+        for fut in as_completed(futs):
+            name = futs[fut]
+            try:
+                res, trace = fut.result()
+                agent_results[name] = res
+                agent_results[f"{name}_trace"] = trace
+                logger.info(
+                    "--- %s: confidence=%s knowledge=%s ---",
+                    name, res.confidence_score, res.is_knowledge_present,
+                )
+            except Exception as e:
+                logger.error("--- %s failed: %s ---", name, e)
 
     return {"results": agent_results}
 
@@ -109,7 +88,7 @@ def mind_agent_node(state: AgentState):
     combined_context = "\n---\n".join(agent_sections)
 
     # Synthesize with GPT-5.2
-    llm = ChatOpenAI(model="gpt-4.1", temperature=0.2)  # Using gpt-4.1 as gpt-5.2 identifier
+    llm = chat_llm(temperature=0.2)
     structured_llm = llm.with_structured_output(MindAgentResponse, method="json_schema", strict=True)
 
     synthesis_prompt = f"""The user asked: "{query}"

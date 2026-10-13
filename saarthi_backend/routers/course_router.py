@@ -40,14 +40,19 @@ from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationP
 from saarthi_backend.service import course_service
 from saarthi_backend.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from saarthi_backend.utils.logging import get_logger
-from saarthi_backend.service.indexing_service import index_material_background, delete_material_from_index
+from saarthi_backend.service.indexing_service import (
+    delete_material_from_index,
+    get_material_index_status,
+    index_material_background,
+    is_indexable,
+)
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 logger = get_logger(__name__)
 
 # File upload for assignment attachments (no separate upload router; one router per DAO)
 _UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
-_MAX_UPLOAD_MB = 10
+_MAX_UPLOAD_MB = 20  # matches the frontend dropzone and the teacher assistant
 
 # Strict allowlist for course material file types (serve + upload)
 _ALLOWED_MATERIAL_EXTENSIONS = frozenset({".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt", ".jpg", ".jpeg", ".png", ".gif", ".webp"})
@@ -184,9 +189,11 @@ async def list_courses(
     db: Annotated[AsyncSession, Depends(get_db)],
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
-    """List courses. Students see only enrolled courses; teachers/admins see all."""
-    if user.role in ("admin", "teacher"):
+    """List courses. Admins see all; teachers see only their own courses; students see only enrolled courses."""
+    if user.role == "admin":
         courses, total = await course_service.list_courses(db, limit=pagination.limit, offset=pagination.offset)
+    elif user.role == "teacher":
+        courses, total = await course_service.list_owned_courses(db, owner_id=user.id, limit=pagination.limit, offset=pagination.offset)
     else:
         courses, total = await course_service.list_enrolled_courses(db, user.id, limit=pagination.limit, offset=pagination.offset)
     return PaginatedResponse(
@@ -232,12 +239,19 @@ async def my_enrollments(
 @router.get("/{course_id}", response_model=CourseResponse)
 async def get_course(
     course_id: int,
+    user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Get course by id."""
+    """Get course by id. Teachers can only access their own courses; admins see all; students need enrollment."""
     course = await course_service.get_course(db, course_id)
     if not course:
         raise NotFoundError("Course not found.", details=None)
+    if user.role == "teacher" and course.owner_id != user.id:
+        raise ForbiddenError("You can only access courses you created.", details=None)
+    if user.role == "student":
+        enrollment = await course_service.get_enrollment(db, user.id, course_id)
+        if not enrollment:
+            raise ForbiddenError("You must be enrolled in this course to view it.", details=None)
     return _course_to_response(course)
 
 
@@ -379,7 +393,7 @@ async def invite_student(
         email=invite.email,
         courseId=str(invite.course_id),
         expiresAt=invite.expires_at.isoformat(),
-        inviteLink=f"/courses/join?code={invite.invite_code}",
+        inviteLink=f"/join?code={invite.invite_code}",
     )
 
 
@@ -420,6 +434,19 @@ async def join_course(
         db, user_id=user.id, user_email=user.email, invite_code=body.inviteCode
     )
     if result is None:
+        # Students often type the course code (e.g. "DS101") instead of the class code.
+        from sqlalchemy import func, select
+        from saarthi_backend.model import Course
+        code = (body.inviteCode or "").strip()
+        is_course_code = (await db.execute(
+            select(func.count()).select_from(Course).where(func.lower(Course.code) == code.lower())
+        )).scalar()
+        if is_course_code:
+            raise ValidationError(
+                f'"{code}" is the course code, not a join code. Ask your teacher for the class code '
+                "(People → Invite Students → Create class code).",
+                details=None,
+            )
         raise ValidationError(
             "Invalid or expired invite code. Ask your teacher for a new link.",
             details=None,
@@ -474,6 +501,14 @@ async def create_assignment(
         points=body.points,
         topic=body.topic,
         attachments=body.attachments,
+    )
+    await course_service.create_stream_item(
+        db,
+        course_id=course_id,
+        description=a.title,
+        author=user.full_name or "Instructor",
+        type="assignment",
+        title=f"{user.full_name or 'Instructor'} posted a new assignment:",
     )
     await db.commit()
     return _assignment_to_response(a)
@@ -588,17 +623,36 @@ async def create_material(
         description=body.description,
         topic=body.topic,
     )
+    await course_service.create_stream_item(
+        db,
+        course_id=course_id,
+        description=m.title,
+        author=user.full_name or "Instructor",
+        type="material",
+        title=f"{user.full_name or 'Instructor'} posted a new material:",
+    )
     await db.commit()
 
-    # Auto-index uploaded PDFs/txt files so the AI can answer questions from them immediately
-    if body.url and body.type in ("pdf", "txt"):
-        filename = _uploads_filename_from_url(body.url)
-        if filename:
-            file_path = _UPLOAD_DIR / filename
-            if file_path.exists():
-                index_material_background(file_path, body.title, course_id, m.id)
+    # Auto-index uploaded files so the AI can answer questions from them immediately.
+    # Decide by the file's extension, not the dropdown type (a .txt saved as "doc"
+    # used to be skipped while the UI kept polling for it).
+    _index_material_file(m.url or "", m.title, course_id, m.id)
 
     return _material_to_response(m)
+
+
+def _index_material_file(url: str, title: str, course_id: int, material_id: int) -> str | None:
+    """Queue indexing for a local upload. Returns a skip reason, or None if queued."""
+    filename = _uploads_filename_from_url(url)
+    if not filename:
+        return "No local file (external URL or link material)"
+    file_path = _resolve_upload_path(filename)
+    if not file_path or not file_path.exists():
+        return "File not found on disk"
+    if not is_indexable(file_path):
+        return f"File type {file_path.suffix.lower()} not supported for indexing"
+    index_material_background(file_path, title, course_id, material_id)
+    return None
 
 
 @router.patch("/{course_id}/materials/{material_id}", response_model=MaterialResponse)
@@ -615,6 +669,7 @@ async def update_material(
     material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
+    old_url, old_title = material.url, material.title
     updated = await course_service.update_material(
         db,
         material_id,
@@ -625,6 +680,9 @@ async def update_material(
         topic=body.topic,
     )
     await db.commit()
+    if updated and (updated.url != old_url or updated.title != old_title):
+        # Chunks carry the title for filtering; re-index so they match the new file/title.
+        _index_material_file(updated.url or "", updated.title, course_id, material_id)
     return _material_to_response(updated)
 
 
@@ -685,17 +743,24 @@ async def reindex_material(
     material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
-    filename = _uploads_filename_from_url(material.url or "")
-    if not filename:
-        return {"status": "skipped", "reason": "No local file (external URL or link material)"}
-    file_path = _UPLOAD_DIR / filename
-    if not file_path.exists():
-        return {"status": "skipped", "reason": "File not found on disk"}
-    ext = file_path.suffix.lower()
-    if ext not in (".pdf", ".txt"):
-        return {"status": "skipped", "reason": f"File type {ext} not supported for indexing"}
-    index_material_background(file_path, material.title, course_id, material_id)
+    reason = _index_material_file(material.url or "", material.title, course_id, material_id)
+    if reason:
+        return {"status": "skipped", "reason": reason}
     return {"status": "indexing", "material": material.title, "course_id": course_id}
+
+
+@router.get("/{course_id}/materials/{material_id}/index-status")
+async def material_index_status(
+    course_id: int,
+    material_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Indexing progress polled by the course page: queued | running | done | error | unsupported | none."""
+    material = await course_service.get_material(db, material_id)
+    if not material or material.course_id != course_id:
+        raise NotFoundError("Material not found.", details=None)
+    return await run_in_threadpool(get_material_index_status, course_id, material_id)
 
 
 @router.delete("/{course_id}/materials/{material_id}", status_code=204)

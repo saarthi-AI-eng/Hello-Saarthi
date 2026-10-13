@@ -1,21 +1,14 @@
-"""Code execution service: local subprocess runner + AI error explanation.
-
-Piston public API went whitelist-only on 2026-02-15.
-We now run code locally in a temp directory with a strict timeout.
-Each language must be installed on the host (python3, node, g++, gcc,
-javac/java, rustc, go, bash, Rscript).  Missing runtimes return a clear
-error rather than crashing.
+"""Code execution service: every language now routes through
+saarthi_backend.service.sandbox.run_code(), so the Docker isolation
+guarantees (--network none, memory/pid caps) apply consistently instead of
+only to Python. Falls back to local subprocess execution when
+CODE_SANDBOX=local or the Docker daemon is unavailable.
 """
-
 import asyncio
 import json
 import logging
-import os
-import shutil
-import tempfile
 import time
 from collections.abc import AsyncGenerator
-from pathlib import Path
 
 from saarthi_backend.schema.code_schemas import (
     CodeExecuteRequest,
@@ -24,40 +17,54 @@ from saarthi_backend.schema.code_schemas import (
     CodeExplainRequest,
     CodeExplainResponse,
 )
+from saarthi_backend.service.sandbox import LANG_CONFIG, mode as sandbox_mode, run_code, runtime_missing
 
 logger = logging.getLogger(__name__)
-
-EXEC_TIMEOUT = 15  # seconds per run
-
-# ── Language → (binary, compile_cmd | None, run_cmd) ─────────────────────────
-# {lang_key: (check_binary, compile_template, run_template)}
-# Templates use {src} for source file path and {out} for compiled binary path.
-
-_LANG_CONFIG: dict[str, tuple[str, str | None, str]] = {
-    "python":     ("python3",  None,                              "python3 {src}"),
-    "javascript": ("node",     None,                              "node {src}"),
-    "cpp":        ("g++",      "g++ -O2 -o {out} {src}",         "{out}"),
-    "c":          ("gcc",      "gcc -O2 -o {out} {src} -lm",     "{out}"),
-    "java":       ("javac",    "javac {src}",                     "java -cp {dir} Main"),
-    "rust":       ("rustc",    "rustc -o {out} {src}",            "{out}"),
-    "go":         ("go",       None,                              "go run {src}"),
-    "bash":       ("bash",     None,                              "bash {src}"),
-    "r":          ("Rscript",  None,                              "Rscript {src}"),
-}
-
-_EXT: dict[str, str] = {
-    "python": "py", "javascript": "js", "cpp": "cpp", "c": "c",
-    "java": "java", "rust": "rs", "go": "go", "bash": "sh", "r": "r",
-}
+from src.utils.llm import async_openai, chat_model_name
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 
-# ── Execute ───────────────────────────────────────────────────────────────────
+def _run_with_api_python(code: str, stdin: str = "") -> dict:
+    """Last resort: the exact interpreter running FastAPI (conda ml_env)."""
+    exe = sys.executable
+    conda = os.environ.get("CONDA_PREFIX") or ""
+    for cand in (
+        exe,
+        str(Path(conda) / "python.exe") if conda else "",
+        r"E:\anaconda_conda\envs\ml_env\python.exe",
+    ):
+        if cand and Path(cand).is_file() and "windowsapps" not in cand.lower():
+            exe = cand
+            break
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "main.py"
+        src.write_text(code, encoding="utf-8")
+        r = subprocess.run(
+            [exe, str(src)],
+            input=(stdin or "").encode(),
+            capture_output=True,
+            timeout=30,
+            cwd=tmp,
+            shell=False,
+        )
+        return {
+            "stdout": r.stdout.decode(errors="replace"),
+            "stderr": r.stderr.decode(errors="replace"),
+            "exit_code": r.returncode,
+            "sandbox": "api-python",
+            "language": "python",
+            "runtime": exe,
+        }
 
+
+# ── Execute ─────────────────────────────────────────────────────────────────
 async def execute_code(body: CodeExecuteRequest) -> CodeExecuteResponse:
     lang = body.language.lower()
-    config = _LANG_CONFIG.get(lang)
-
-    if config is None:
+    if lang not in LANG_CONFIG:
         return CodeExecuteResponse(
             result=CodeExecuteResult(
                 stdout="", stderr=f"Language '{lang}' is not supported.",
@@ -65,146 +72,68 @@ async def execute_code(body: CodeExecuteRequest) -> CodeExecuteResponse:
             )
         )
 
-    binary, compile_tpl, run_tpl = config
+    loop = asyncio.get_running_loop()
+    t0 = time.monotonic()
+    # run_code() shells out (or calls `docker run`) synchronously — keep it
+    # off the event loop.
+    boxed = await loop.run_in_executor(None, run_code, lang, body.code, body.stdin or "")
+    err = (boxed.get("stderr") or "")
+    if lang == "python" and ("Microsoft Store" in err or "WindowsApps" in err or "execution aliases" in err):
+        boxed = await loop.run_in_executor(None, _run_with_api_python, body.code, body.stdin or "")
+    elapsed = round((time.monotonic() - t0) * 1000, 1)
 
-    # Check binary is installed
-    if not shutil.which(binary):
-        return CodeExecuteResponse(
-            result=CodeExecuteResult(
-                stdout="",
-                stderr=(
-                    f"Runtime '{binary}' is not installed on this server.\n"
-                    f"Ask your administrator to install {binary}."
-                ),
-                exitCode=1, language=lang, runtime=binary,
-            )
-        )
+    runtime_label = f"{boxed.get('runtime') or lang} ({boxed.get('sandbox') or 'unknown'})"
+    result = CodeExecuteResult(
+        stdout=boxed.get("stdout") or "",
+        stderr=boxed.get("stderr") or "",
+        exitCode=int(boxed.get("exit_code") or 0),
+        language=lang,
+        runtime=runtime_label,
+        executionMs=elapsed,
+    )
 
-    ext = _EXT.get(lang, "txt")
-    # Java requires filename == class name "Main"
-    filename = f"Main.{ext}" if lang == "java" else f"main.{ext}"
+    ai_explanation = None
+    ai_suggestions: list[str] = []
+    if body.explainOnError and (result.exitCode != 0 or result.stderr):
+        explained = await explain_error(CodeExplainRequest(
+            code=body.code, language=lang, stderr=result.stderr,
+            exitCode=result.exitCode, courseContext=body.courseContext,
+        ))
+        ai_explanation = explained.explanation
+        ai_suggestions = explained.suggestions
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        src = str(Path(tmpdir) / filename)
-        out = str(Path(tmpdir) / "prog")
-
-        Path(src).write_text(body.code, encoding="utf-8")
-
-        t0 = time.monotonic()
-        compile_stderr = ""
-
-        # ── Compile step ──────────────────────────────────────────────────────
-        if compile_tpl:
-            cmd = compile_tpl.format(src=src, out=out, dir=tmpdir)
-            ok, _, compile_stderr = await _run_cmd(cmd, stdin="", cwd=tmpdir)
-            if not ok:
-                elapsed = round((time.monotonic() - t0) * 1000, 1)
-                return CodeExecuteResponse(
-                    result=CodeExecuteResult(
-                        stdout="", stderr=compile_stderr,
-                        exitCode=1, language=lang, runtime=binary,
-                        executionMs=elapsed,
-                    )
-                )
-
-        # ── Run step ──────────────────────────────────────────────────────────
-        run_cmd = run_tpl.format(src=src, out=out, dir=tmpdir)
-        exit_ok, stdout, stderr = await _run_cmd(
-            run_cmd, stdin=body.stdin or "", cwd=tmpdir
-        )
-        elapsed = round((time.monotonic() - t0) * 1000, 1)
-        exit_code = 0 if exit_ok else 1
-
-        result = CodeExecuteResult(
-            stdout=stdout,
-            stderr=stderr,
-            exitCode=exit_code,
-            language=lang,
-            runtime=binary,
-            executionMs=elapsed,
-        )
-
-        ai_explanation: str | None = None
-        ai_suggestions: list[str] = []
-
-        if body.explainOnError and (exit_code != 0 or stderr):
-            explain_body = CodeExplainRequest(
-                code=body.code, language=lang, stderr=stderr,
-                exitCode=exit_code, courseContext=body.courseContext,
-            )
-            explained = await explain_error(explain_body)
-            ai_explanation = explained.explanation
-            ai_suggestions = explained.suggestions
-
-        return CodeExecuteResponse(
-            result=result,
-            aiExplanation=ai_explanation,
-            aiSuggestions=ai_suggestions,
-        )
+    return CodeExecuteResponse(result=result, aiExplanation=ai_explanation, aiSuggestions=ai_suggestions)
 
 
-async def _run_cmd(
-    cmd: str, stdin: str, cwd: str, timeout: int = EXEC_TIMEOUT
-) -> tuple[bool, str, str]:
-    """Run a shell command, return (success, stdout, stderr)."""
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-        )
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(input=stdin.encode()),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            return False, "", f"Execution timed out after {timeout} seconds."
-
-        stdout = stdout_b.decode(errors="replace")
-        stderr = stderr_b.decode(errors="replace")
-        return proc.returncode == 0, stdout, stderr
-
-    except Exception as e:
-        return False, "", f"Execution error: {e}"
-
-
-# ── AI error explanation ───────────────────────────────────────────────────────
-
-_EXPLAIN_SYSTEM = """You are an expert programming tutor for engineering students.
-A student's code has failed. Analyse the error and provide a clear explanation.
+# ── AI error explanation ─────────────────────────────────────────────────────
+_EXPLAIN_SYSTEM = """You are a programming tutor for engineering students (spec 7.2: Socratic debugging).
+A student's code failed. Explain the error in plain language, then guide — do not fix it for them.
 
 Return ONLY valid JSON:
 {
-  "explanation": "2-3 sentence plain-English explanation of what went wrong and why",
-  "suggestions": ["specific fix 1", "specific fix 2", "specific fix 3"]
+  "explanation": "2-3 sentences: what the error message means and where it comes from",
+  "suggestions": ["hint 1", "hint 2", "hint 3"]
 }
 
 Rules:
-- Be specific — reference the actual error message and line numbers when visible
-- suggestions must be actionable one-liners the student can apply immediately
-- If it's a logic error (wrong output, not a crash), explain the logical mistake
-- Relate to engineering/DSP/ML context when courseContext is provided"""
+- Reference the actual error message and line number when visible.
+- suggestions are Socratic hints: point to what to check or ask a guiding question.
+  Never give the corrected line or corrected code.
+- If it is a logic error (wrong output, no crash), hint at the mistaken assumption.
+- Relate to the DSP/engineering context when courseContext is provided."""
 
 
 async def explain_error(body: CodeExplainRequest) -> CodeExplainResponse:
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-
+        client = async_openai()
         context_line = f"\nCourse context: {body.courseContext}" if body.courseContext else ""
         user_prompt = (
             f"Language: {body.language}{context_line}\n\n"
             f"Code:\n```{body.language}\n{body.code[:3000]}\n```\n\n"
             f"Error (exit code {body.exitCode}):\n{body.stderr[:1500]}"
         )
-
         response = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[
                 {"role": "system", "content": _EXPLAIN_SYSTEM},
                 {"role": "user", "content": user_prompt},
@@ -213,7 +142,6 @@ async def explain_error(body: CodeExplainRequest) -> CodeExplainResponse:
             max_tokens=600,
             response_format={"type": "json_object"},
         )
-
         data = json.loads(response.choices[0].message.content or "{}")
         return CodeExplainResponse(
             explanation=data.get("explanation", "An error occurred in your code."),
@@ -228,27 +156,22 @@ async def explain_error(body: CodeExplainRequest) -> CodeExplainResponse:
 
 
 # ── SSE streaming explanation ─────────────────────────────────────────────────
-
-_EXPLAIN_STREAM_SYSTEM = """You are an expert programming tutor for engineering students.
+_EXPLAIN_STREAM_SYSTEM = """You are a programming tutor for engineering students.
 
 If the code FAILED (exit code != 0 or stderr present):
-- Explain what went wrong in clear, friendly plain English
-- Be specific about the error message and line
-- Give 2-3 concrete fixes
-- Keep it under 150 words. No code blocks.
+- Explain what the error message means in friendly plain English, naming the line if visible.
+- Then give 1-2 Socratic hints (what to check, or a guiding question). Do NOT write the fix.
+- Under 150 words. No code blocks.
 
 If the code SUCCEEDED (exit code 0, no errors):
-- Give a brief insight about what the code does and what the output means
-- Point out anything interesting, efficient, or worth improving
-- Keep it under 120 words. Be encouraging but precise. No code blocks."""
+- Briefly explain what the output means and one thing worth improving.
+- Under 120 words. Encouraging but precise. No code blocks."""
 
 
 async def stream_explain_error(body: CodeExplainRequest) -> AsyncGenerator[str, None]:
     """Stream the AI explanation/insight token-by-token via SSE."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-
+        client = async_openai()
         context_line = f" (course: {body.courseContext})" if body.courseContext else ""
         is_success = body.exitCode == 0 and not body.stderr
 
@@ -268,7 +191,7 @@ async def stream_explain_error(body: CodeExplainRequest) -> AsyncGenerator[str, 
             )
 
         stream = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[
                 {"role": "system", "content": _EXPLAIN_STREAM_SYSTEM},
                 {"role": "user", "content": user_prompt},
@@ -277,28 +200,27 @@ async def stream_explain_error(body: CodeExplainRequest) -> AsyncGenerator[str, 
             max_tokens=300,
             stream=True,
         )
-
         async for chunk in stream:
             delta = chunk.choices[0].delta.content
             if delta:
                 yield f"data: {delta.replace(chr(10), chr(92) + 'n')}\n\n"
-
         yield "data: [DONE]\n\n"
-
     except Exception as e:
         logger.exception("Stream explain failed: %s", e)
         yield "data: Unable to generate explanation.\n\n"
         yield "data: [DONE]\n\n"
 
 
-# ── Runtime list (local, no external API) ─────────────────────────────────────
-
+# ── Runtime list ──────────────────────────────────────────────────────────────
 async def list_runtimes() -> list[dict]:
-    """Return which runtimes are actually installed on this machine."""
+    """Which runtimes are actually usable right now: local binary present,
+    or the Docker sandbox is active (in which case availability depends on
+    SANDBOX_IMAGE — see sandbox.py docstring)."""
+    m = sandbox_mode()
     result = []
-    for lang, (binary, _, _) in _LANG_CONFIG.items():
-        if shutil.which(binary):
-            result.append({"language": lang, "runtime": binary, "available": True})
+    for lang, (binary, _, _) in LANG_CONFIG.items():
+        if m == "docker":
+            result.append({"language": lang, "runtime": f"{binary} (docker, image={None})", "available": True})
         else:
-            result.append({"language": lang, "runtime": binary, "available": False})
+            result.append({"language": lang, "runtime": binary, "available": runtime_missing(lang) is None})
     return result

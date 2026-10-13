@@ -9,13 +9,13 @@ logger = logging.getLogger(__name__)
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+from src.utils.llm import embeddings as make_embeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_core.documents import Document
 
 KB_STATUS_FILE = "kb_status.json"
-EMBEDDING_MODEL = "text-embedding-3-large"
+EMBEDDING_MODEL = "configured-in-src.utils.llm"
 
 # TTL cache so check_and_update_kb_index doesn't do file I/O on every request
 _KB_CHECK_CACHE: dict[str, float] = {}
@@ -61,7 +61,7 @@ def get_retriever(expert_name: str) -> Optional[VectorStoreRetriever]:
     if not index_path.exists():
         return None
         
-    embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+    embeddings = make_embeddings()
     try:
         vector_store = FAISS.load_local(
             str(index_path), 
@@ -123,7 +123,7 @@ def ingest_documents(expert_name: str) -> bool:
     
     # 3. Vectorize and Index
     logger.info(f"Embedding and indexing {expert_name}...")
-    embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+    embeddings = make_embeddings()
     vector_store = FAISS.from_documents(documents=splits, embedding=embeddings)
     
     # 4. Save Index
@@ -184,22 +184,24 @@ def check_and_update_kb_index(expert_name: str) -> bool:
             
     return False
 
+_EXPERT_DESCRIPTIONS = {
+    "notes_agent": "lecture notes and uploaded documents of the course",
+    "books_agent": "textbook theory: definitions, derivations, properties (signals, systems, DSP)",
+    "video_agent": "lecture video transcripts",
+    "calculator_agent": "numeric calculations",
+    "saarthi_agent": "greetings, small talk, what Saarthi can do, study planning — no course facts",
+    "data_analysis_agent": "analysing an uploaded CSV dataset (columns, statistics, plots)",
+    "web_agent": "current events outside the course (disabled unless ALLOW_WEB_AGENT=1)",
+}
+
+
 def get_expert_description(expert_name: str) -> str:
-    """
-    Returns the description of the expert. 
-    """
-    if "expert_1" in expert_name or "notes_agent" in expert_name:
-        return "Notes Agent: Specialized in retrieving information from personal notes and documents. Use this when the user asks about meetings, specific personal details, or content from their uploaded notes."
-    if "expert_2" in expert_name or "books_agent" in expert_name:
-        return "Books Agent: Specialized in answering questions based on the books in the knowledge base. Use this for general knowledge, stories, or content likely found in books."
-    if "calculator_agent" in expert_name:
-        return "Calculator Agent: Specialized in performing mathematical calculations."
-    if "saarthi_agent" in expert_name:
-        return "Saarthi Agent: A general, friendly conversational assistant. Use this for greetings, small talk, questions about the user's identity (e.g., 'What is my name?'), referring to previous parts of this conversation, or queries that don't fit the specific Notes, Books, Calculator, or Video experts."
-    if "video_agent" in expert_name:
-        return "Video Agent: Specialized in answering questions from video lecture transcripts on signals and systems. Use this when the user asks about lecture content, concepts explained in video lectures, or video-based tutorials."
-    if "data_analysis_agent" in expert_name:
-        return "Data Analysis Agent: Specialized in analyzing uploaded CSV datasets using pandas and numpy. Use this when the user asks to analyze data, explore a dataset, compute statistics, filter rows, find correlations, or any data-related query. Also use this when the user mentions 'data', 'CSV', 'dataset', 'analyze', 'plot', 'statistics', 'columns', or 'rows'."
-    if "web_agent" in expert_name:
-        return "Web Agent: Searches the internet for up-to-date information. Use this ONLY when the topic is clearly outside the course materials — e.g., current events, general programming questions, or topics the other agents could not answer. Prefer course-specific agents first."
+    """One-line routing description per expert (kept short: prompt audit, WBS 3.3.5)."""
+    for key, desc in _EXPERT_DESCRIPTIONS.items():
+        if key in expert_name:
+            return desc
+    if "expert_1" in expert_name:
+        return _EXPERT_DESCRIPTIONS["notes_agent"]
+    if "expert_2" in expert_name:
+        return _EXPERT_DESCRIPTIONS["books_agent"]
     return "General Assistant"

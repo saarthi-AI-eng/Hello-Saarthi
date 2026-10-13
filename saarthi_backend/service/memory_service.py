@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-WORKING_WINDOW = 6       # recent turns kept verbatim
+WORKING_WINDOW = 10      # recent messages kept verbatim = last 5 exchanges (spec 4.5)
 SUMMARIZE_EVERY = 4      # trigger re-summarization after this many new turns beyond last checkpoint
 FIRST_SUMMARY_AT = 8     # trigger first-ever summary once DB has this many messages (covers the gap)
 MAX_SUMMARY_TOKENS = 200 # rough word budget for the summary paragraph
@@ -72,15 +72,15 @@ async def _write_context(db: AsyncSession, conv_id: int, summary: str, up_to_mes
 async def _summarize_turns(turns: list[dict]) -> str:
     """Call GPT-4o-mini to compress a batch of old turns into one paragraph."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        from src.utils.llm import async_openai, chat_model_name
+        client = async_openai()
         transcript = "\n".join(
             f"{'Student' if m['role'] == 'user' else 'Saarthi'}: {m['content'][:400]}"
             for m in turns
         )
         response = await asyncio.wait_for(
             client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=chat_model_name(fast=True),
                 messages=[
                     {
                         "role": "system",

@@ -1,0 +1,100 @@
+{"query": "what's the nyquist frequency", "tier": 1}
+{"query": "Define a linear time-invariant system.", "tier": 1}
+{"query": "What is the sinc function?", "tier": 1}
+{"query": "hey there", "tier": 1}
+{"query": "What does FFT stand for?", "tier": 1}
+{"query": "What is an anti-aliasing filter?", "tier": 1}
+{"query": "What is the cutoff frequency of a filter?", "tier": 1}
+{"query": "Tell me what a pole-zero plot is", "tier": 1}
+{"query": "What is the Laplace transform of the delta function?", "tier": 1}
+{"query": "Is convolution commutative?", "tier": 1}
+{"query": "What is a causal system?", "tier": 1}
+{"query": "Meaning of BIBO", "tier": 1}
+{"query": "What is the DC component of a signal?", "tier": 1}
+{"query": "What is the time period of sin(4t)?", "tier": 1}
+{"query": "Which property says x(t-t0) gives a phase shift?", "tier": 1}
+{"query": "what is a unit impulse", "tier": 1}
+{"query": "Define the energy of a signal.", "tier": 1}
+{"query": "What is a stable system?", "tier": 1}
+{"query": "What are harmonics?", "tier": 1}
+{"query": "What is a band-pass filter?", "tier": 1}
+{"query": "thanks a lot, that helped", "tier": 1}
+{"query": "What is the transfer function of an integrator?", "tier": 1}
+{"query": "What is frequency resolution?", "tier": 1}
+{"query": "What is a twiddle factor?", "tier": 1}
+{"query": "What is spectral leakage?", "tier": 1}
+{"query": "Is the Z-transform defined for negative n?", "tier": 1}
+{"query": "Define the inverse Fourier transform", "tier": 1}
+{"query": "What is the Hamming window?", "tier": 1}
+{"query": "What is the passband?", "tier": 1}
+{"query": "What is meant by a memoryless system?", "tier": 1}
+{"query": "What does the ROC of a causal system look like?", "tier": 1}
+{"query": "What is the unit circle in the z-plane?", "tier": 1}
+{"query": "Explain the convolution theorem", "tier": 1}
+{"query": "What is the sampling period?", "tier": 1}
+{"query": "Who is Nyquist?", "tier": 1}
+{"query": "What is a decibel?", "tier": 1}
+{"query": "Explain aliasing in simple words", "tier": 1}
+{"query": "What is phase delay?", "tier": 1}
+{"query": "What is a zero-order hold?", "tier": 1}
+{"query": "What is the Fourier transform of a constant?", "tier": 1}
+{"query": "Name the properties of the DFT", "tier": 1}
+{"query": "What is a difference equation?", "tier": 1}
+{"query": "What is an all-pass filter?", "tier": 1}
+{"query": "What does the magnitude response show?", "tier": 1}
+{"query": "What is undersampling?", "tier": 1}
+{"query": "Explain what a transfer function is", "tier": 1}
+{"query": "good evening saarthi", "tier": 1}
+{"query": "What is time scaling of a signal?", "tier": 1}
+{"query": "What is the inverse Laplace transform of 1/s?", "tier": 1}
+{"query": "Define periodic convolution.", "tier": 1}
+{"query": "Find the convolution of x[n] = {1, 1, 1} with h[n] = {1, -1}.", "tier": 2}
+{"query": "Derive the Fourier transform of a decaying exponential e^{-at}u(t).", "tier": 2}
+{"query": "Is y(t) = x(2t) time invariant? Justify step by step.", "tier": 2}
+{"query": "Calculate the Z-transform and ROC of x[n] = (0.5)^n u[n] + (2)^n u[-n-1].", "tier": 2}
+{"query": "Why does the FFT reduce complexity from N^2 to N log N? Explain the butterfly structure.", "tier": 2}
+{"query": "my matlab fft plot shows a spike at the wrong frequency, how do I fix the frequency axis?", "tier": 2}
+{"query": "Compare the Hamming and Kaiser windows for FIR filter design and explain the trade-offs.", "tier": 2}
+{"query": "A signal has components at 3 kHz and 7 kHz and is sampled at 8 kHz. Which components alias and to what frequencies?", "tier": 2}
+{"query": "Design an IIR low-pass filter using the bilinear transform for a 2 kHz cutoff at 8 kHz sampling.", "tier": 2}
+{"query": "Show that the Fourier transform of a real even signal is real and even.", "tier": 2}
+{"query": "How do I solve for the output y(t) of an RC circuit when the input is a unit step?", "tier": 2}
+{"query": "Find the inverse Z-transform of X(z) = z / ((z - 0.5)(z - 0.25)) for a causal sequence.", "tier": 2}
+{"query": "Evaluate the energy of x(t) = e^{-3|t|} using Parseval's theorem.", "tier": 2}
+{"query": "Determine the frequency response of the system y[n] = 0.5 y[n-1] + x[n] and sketch the magnitude.", "tier": 2}
+{"query": "Explain why linear phase FIR filters need symmetric coefficients, with the math.", "tier": 2}
+{"query": "Python: np.convolve gives me a longer array than my signal, why and how do I get 'same' length?", "tier": 2}
+{"query": "Analyze stability of H(s) = 1/(s^2 - s + 2) and explain using pole locations.", "tier": 2}
+{"query": "Work through the 8-point radix-2 FFT of a given sequence step by step.", "tier": 2}
+{"query": "What happens to the spectrum when I multiply a signal by cos(w0 t)? Derive it.", "tier": 2}
+{"query": "Prove that the convolution of two causal signals is causal.", "tier": 2}
+{"query": "Contrast impulse invariance and the bilinear transform for IIR design and when each fails.", "tier": 2}
+{"query": "Compute the DTFT of x[n] = u[n] - u[n-5] and find where it is zero.", "tier": 2}
+{"query": "Why is my IIR filter unstable in MATLAB after quantizing the coefficients?", "tier": 2}
+{"query": "Given h[n] = 0.9^n u[n], find the output for x[n] = u[n] in closed form.", "tier": 2}
+{"query": "Explain how the region of convergence decides causality and stability, with examples of all three cases.", "tier": 2}
+{"query": "Relate the Laplace transform to the Fourier transform and explain when the Fourier transform does not exist.", "tier": 2}
+{"query": "Calculate the autocorrelation of x[n] = {1, 2, 1} and verify it is symmetric.", "tier": 2}
+{"query": "Determine the Fourier series coefficients of a square wave with 50% duty cycle.", "tier": 2}
+{"query": "how do i find the step response from the impulse response h(t) = 2e^{-2t}u(t)", "tier": 2}
+{"query": "Why does decimation require a low-pass filter first? Show what goes wrong in the spectrum otherwise.", "tier": 2}
+{"query": "Design a 31-tap band-pass FIR filter and explain how to choose the window.", "tier": 2}
+{"query": "Solve the difference equation y[n] - 0.25 y[n-2] = x[n] for x[n] = delta[n] with zero initial conditions.", "tier": 2}
+{"query": "The DFT of my 100-sample signal looks smeared; explain leakage and how windowing and zero padding change it.", "tier": 2}
+{"query": "Compute the group delay of H(z) = 1 + z^{-1} + z^{-2}.", "tier": 2}
+{"query": "Explain the Gibbs phenomenon mathematically and why truncating the Fourier series causes it.", "tier": 2}
+{"query": "Find the Nyquist rate of x(t) = sinc(200t) * cos(1000 pi t) and justify each step.", "tier": 2}
+{"query": "debug: my scipy.signal.butter filter returns NaN outputs, what am I doing wrong", "tier": 2}
+{"query": "Evaluate the inverse Laplace transform of (s+3)/((s+1)(s+2)) using partial fractions.", "tier": 2}
+{"query": "What are the advantages and disadvantages of overlap-save over direct convolution for long signals?", "tier": 2}
+{"query": "Determine whether x(t) = cos(2t) + sin(3 pi t) is periodic and find the period if it is.", "tier": 2}
+{"query": "Explain step by step how to compute circular convolution using the DFT.", "tier": 2}
+{"query": "Show that the cascade of two LTI systems is LTI and find the overall impulse response.", "tier": 2}
+{"query": "Why is the bilinear transform free of aliasing but suffers from frequency warping? Derive the warping relation.", "tier": 2}
+{"query": "For H(s) = 10/(s+10), sketch the Bode magnitude and phase and find the -3 dB frequency.", "tier": 2}
+{"query": "My code computes the FFT of a real signal but the second half is not the conjugate of the first, why?", "tier": 2}
+{"query": "Compute the convolution of u(t) with e^{-2t}u(t) and verify using Laplace transforms.", "tier": 2}
+{"query": "Analyze the effect of moving a zero onto the unit circle on the magnitude response.", "tier": 2}
+{"query": "Compare sampling with an ideal impulse train versus flat-top sampling and their spectra.", "tier": 2}
+{"query": "Derive the relationship between the DFT and the DTFT and explain frequency sampling.", "tier": 2}
+{"query": "Find the poles, zeros and ROC of X(z) = (1 - z^{-2}) / (1 - 0.81 z^{-2}) and decide if the system can be both causal and stable.", "tier": 2}

@@ -252,3 +252,34 @@ async def peer_comparison(
 ):
     """Return the current user's score percentile against all peers."""
     return await quiz_service.get_peer_comparison(db, user.id)
+
+
+# ─── Grounded MCQ generation (AI WBS 3.5.1) ──────────────────────────────────
+
+from pydantic import BaseModel, Field  # noqa: E402
+
+
+class GroundedMCQRequest(BaseModel):
+    courseId: int
+    topic: str = Field(..., min_length=2, max_length=200)
+    numQuestions: int = Field(5, ge=1, le=10)
+    level: str = Field("L1", pattern="^L[123]$", description="L1 recall · L2 application · L3 analysis")
+    materialTitle: str | None = None
+
+
+@router.post("/generate-grounded")
+async def generate_grounded_mcqs(
+    body: GroundedMCQRequest,
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """MCQs written only from this course's indexed materials; every question cites its
+    source excerpt. Returned with reviewed=false — instructors approve before use (spec 7.3)."""
+    from fastapi.concurrency import run_in_threadpool
+    from src.experts.mcq import generate_mcqs
+
+    return await run_in_threadpool(
+        lambda: generate_mcqs(
+            body.topic, course_id=body.courseId, n=body.numQuestions, level=body.level,
+            material_title=body.materialTitle,
+        )
+    )

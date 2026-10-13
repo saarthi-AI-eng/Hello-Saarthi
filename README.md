@@ -81,3 +81,14 @@ Static uploads served at `/uploads/`. Health: `GET /health`.
 ## Frontend
 
 Point the frontend API base to this backend (e.g. `VITE_API_URL=http://localhost:8000/api`). Frontend repo is separate.
+
+
+docker cmbds for psql
+
+docker run --name saarthi-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
+docker exec saarthi-pg psql -U postgres -c "CREATE DATABASE saarthi;"
+
+
+
+to start
+docker start saarthi-pg

@@ -1,0 +1,112 @@
+.ai-fab-wrap {
+  position: fixed;
+  z-index: 50;
+}
+
+.ai-fab-btn {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border: none;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(135deg, #1d3557 0%, #16324a 55%, #0f2d3c 100%);
+  box-shadow: 0 14px 34px rgba(8, 16, 32, 0.5), 0 2px 10px rgba(3, 7, 18, 0.44);
+  transition: transform 180ms ease, box-shadow 220ms ease, filter 220ms ease;
+}
+
+.ai-fab-btn:hover {
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: 0 18px 40px rgba(8, 16, 32, 0.58), 0 4px 14px rgba(3, 7, 18, 0.5);
+  filter: saturate(1.04);
+}
+
+.ai-fab-btn:active {
+  transform: scale(0.98);
+}
+
+.ai-fab-btn:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.82),
+    0 0 0 6px rgba(15, 118, 110, 0.52),
+    0 18px 40px rgba(8, 16, 32, 0.56);
+}
+
+.ai-fab-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  border: 2px solid rgba(15, 118, 110, 0.4);
+  opacity: 0;
+  animation: ai-fab-pulse 4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.ai-fab-btn.open .ai-fab-ring {
+  opacity: 0;
+  animation: none;
+}
+
+.ai-fab-icon {
+  width: 27px;
+  height: 27px;
+}
+
+.ai-fab-tooltip {
+  position: absolute;
+  right: 74px;
+  bottom: 19px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: #d7e4f5;
+  background: rgba(16, 20, 35, 0.9);
+  border: 1px solid rgba(72, 96, 130, 0.45);
+  border-radius: 9999px;
+  padding: 6px 10px;
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.ai-fab-wrap:hover .ai-fab-tooltip,
+.ai-fab-btn:focus-visible + .ai-fab-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes ai-fab-pulse {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  20% {
+    opacity: 0.7;
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.1);
+  }
+}
+
+@media (max-width: 640px) {
+  .ai-fab-btn {
+    width: 58px;
+    height: 58px;
+  }
+
+  .ai-fab-tooltip {
+    display: none;
+  }
+}

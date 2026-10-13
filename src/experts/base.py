@@ -1,5 +1,5 @@
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool, create_retriever_tool
+from src.utils.llm import chat_llm
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from typing import List, Dict, Any, Tuple
 import logging
@@ -7,6 +7,7 @@ import logging
 from src.prompts.loader import get_prompt
 from src.tools.utilities import calculator
 from src.tools.kb_ops import get_retriever
+from src.tools.retrieve import retrieve, chunks_as_prompt
 from src.schemas.models import ExpertResponse, ExpertName, Citation
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,14 @@ def _build_history_messages(messages: List[Dict[str, Any]]) -> List:
             lc_messages.append(SystemMessage(content=f"Assistant: {msg['content']}"))
     return lc_messages
 
-def run_expert(expert_name: str, query: str, mode: str = "fast", messages: List[Dict[str, Any]] = []) -> Tuple[ExpertResponse, List[Dict]]:
+def run_expert(
+    expert_name: str,
+    query: str,
+    mode: str = "fast",
+    messages: List[Dict[str, Any]] = [],
+    boost_terms: List[str] | None = None,
+    return_chunks: bool = False,
+):
     """
     Runs the expert agent and returns (ExpertResponse, react_trace).
 
@@ -54,7 +62,15 @@ def run_expert(expert_name: str, query: str, mode: str = "fast", messages: List[
 
     react_trace format: [{"step": int, "thought": str, "tools_called": [...], "observations": [...]}]
     In fast mode, react_trace is an empty list.
+
+    With return_chunks=True returns (ExpertResponse, react_trace, chunks) where chunks are
+    the retrieve() results (as dicts) used to ground the answer — empty outside RAG mode.
     """
+    res, trace, chunks = _run_expert(expert_name, query, mode, messages, boost_terms)
+    return (res, trace, chunks) if return_chunks else (res, trace)
+
+
+def _run_expert(expert_name, query, mode, messages, boost_terms):
     logger.info(f"--- Running Expert: {expert_name} (Mode: {mode}) ---")
 
     tools = get_expert_tools(expert_name)
@@ -65,7 +81,7 @@ def run_expert(expert_name: str, query: str, mode: str = "fast", messages: List[
                       "If the answer is NOT in the context, you MUST set 'is_knowledge_present' to False " \
                       "and return a generic 'I do not have this information in my notes' message."
 
-    llm = ChatOpenAI(model="gpt-4.1", temperature=0, max_tokens=3000)
+    llm = chat_llm(temperature=0, max_tokens=3000)
     structured_llm = llm.with_structured_output(ExpertResponse, method="json_schema", strict=True)
     history = _build_history_messages(messages)
 
@@ -147,21 +163,21 @@ def run_expert(expert_name: str, query: str, mode: str = "fast", messages: List[
             + [HumanMessage(content=final_prompt)]
         )
         expert_response = structured_llm.invoke(final_messages)
-        return expert_response, react_trace
+        return expert_response, react_trace, []
 
     elif mode == "rag":
-        # Single FAISS retrieval → one structured LLM call. Fast AND grounded.
-        retriever = get_retriever(expert_name)
-        if retriever:
-            try:
-                docs = retriever.invoke(query)
-                kb_context = "\n\n".join(d.page_content for d in docs)
-            except Exception as e:
-                logger.warning("RAG retrieval failed for %s: %s", expert_name, e)
-                kb_context = ""
-        else:
-            kb_context = ""
-
+        _TYPE = {"notes_agent": "notes", "books_agent": "books", "video_agent": "video"}
+        from src.orchestrator.policy import top_n
+        from src.utils.llm import _TIER
+        k = top_n(_TIER.get() or 1)  # spec 4.2: 3 chunks for Tier 1, 8 for Tier 2
+        chunks = retrieve(query, content_types=[_TYPE.get(expert_name, "notes")], boost_terms=boost_terms, k=k)[:k]
+        if not chunks:
+            # Grounding rule: nothing retrieved -> no LLM call; the graph moves on / says "not covered".
+            return ExpertResponse(
+                agent_name=ExpertName(expert_name), content="", sources=[],
+                confidence_score=0.0, is_knowledge_present=False,
+            ), [], []
+        kb_context = chunks_as_prompt(chunks)
         if kb_context:
             augmented = (
                 f"Relevant excerpts from the knowledge base:\n{kb_context}\n\n"
@@ -175,7 +191,18 @@ def run_expert(expert_name: str, query: str, mode: str = "fast", messages: List[
             + history
             + [HumanMessage(content=augmented)]
         )
-        return structured_llm.invoke(lc_messages), []
+        expert_response = structured_llm.invoke(lc_messages)
+        if chunks and not expert_response.sources:
+            expert_response.sources = [
+                Citation(
+                    source_file=c.source_file or "unknown",
+                    page_number=int(c.page or 0),
+                    snippet=c.text[:280],
+                )
+                for c in chunks[:5]
+            ]
+        from dataclasses import asdict
+        return expert_response, [], [asdict(c) for c in chunks]
 
     else:
         # Fast mode: Direct Structured LLM call (no ReAct, no retrieval)
@@ -184,18 +211,26 @@ def run_expert(expert_name: str, query: str, mode: str = "fast", messages: List[
             + history
             + [HumanMessage(content=query)]
         )
-        return structured_llm.invoke(lc_messages), []
+        return structured_llm.invoke(lc_messages), [], []
 
 from src.utils.state import AgentState
 
-def notes_agent_node(state: AgentState):
+def rag_agent_node(expert_name: str, state: AgentState) -> dict:
     query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
     mode = "planning" if state.get("planning", False) else "rag"
-    res, trace = run_expert("notes_agent", query, mode=mode, messages=state.get("messages", []))
-    return {"results": {"notes_agent": res, "notes_agent_trace": trace}}
+    res, trace, chunks = run_expert(
+        expert_name, query, mode=mode, messages=state.get("messages", []),
+        boost_terms=state.get("boost_terms") or None, return_chunks=True,
+    )
+    out = {"results": {expert_name: res, f"{expert_name}_trace": trace}}
+    if chunks:
+        out["retrieved_chunks"] = chunks
+    return out
+
+
+def notes_agent_node(state: AgentState):
+    return rag_agent_node("notes_agent", state)
+
 
 def books_agent_node(state: AgentState):
-    query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    mode = "planning" if state.get("planning", False) else "rag"
-    res, trace = run_expert("books_agent", query, mode=mode, messages=state.get("messages", []))
-    return {"results": {"books_agent": res, "books_agent_trace": trace}}
+    return rag_agent_node("books_agent", state)

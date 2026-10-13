@@ -1,0 +1,251 @@
+{"query": "What does decimation mean?", "tier": 1}
+{"query": "Define the Laplace transform.", "tier": 1}
+{"query": "Briefly, what is autocorrelation?", "tier": 1}
+{"query": "What is the region of convergence in one line?", "tier": 1}
+{"query": "Explain BIBO stability.", "tier": 1}
+{"query": "What is the Fourier transform of the delta function?", "tier": 1}
+{"query": "Evaluate the frequency response for x(t) = cos(5t) and explain the result.", "tier": 2}
+{"query": "If a signal band-limited to 4 kHz is sampled at 6 kHz, what frequencies alias and why?", "tier": 2}
+{"query": "What does the DFT mean?", "tier": 1}
+{"query": "Is Parseval's theorem covered in this course?", "tier": 1}
+{"query": "What does autocorrelation mean?", "tier": 1}
+{"query": "What is an odd signal?", "tier": 1}
+{"query": "Meaning of a Butterworth filter?", "tier": 1}
+{"query": "Explain how overlap-add relates to overlap-save, with an example.", "tier": 2}
+{"query": "What is the symbol used for an LTI system?", "tier": 1}
+{"query": "Find the Laplace transform of x[n] = {1, 2, 3, 4} and sketch it.", "tier": 2}
+{"query": "Is an IIR filter covered in this course?", "tier": 1}
+{"query": "Compare the Z-transform and the DTFT and explain when to use each.", "tier": 2}
+{"query": "Prove the main property of the inverse Z-transform step by step.", "tier": 2}
+{"query": "Explain the entire signal processing pipeline from sampling to reconstruction with the key equations.", "tier": 2}
+{"query": "What is j in signals and systems?", "tier": 1}
+{"query": "Compute the Fourier transform for H(s) = (s+1)/(s^2 + 3s + 2).", "tier": 2}
+{"query": "Calculate the Z-transform of x(t) = e^{-|t|}, showing all steps.", "tier": 2}
+{"query": "Debug this: y = conv(x, h) returns the wrong length, why?", "tier": 2}
+{"query": "Calculate the Laplace transform of x(t) = e^{-|t|}, showing all steps.", "tier": 2}
+{"query": "What is the difference between the Z-transform and the DTFT, and why does it matter?", "tier": 2}
+{"query": "What is the DTFT?", "tier": 1}
+{"query": "Analyze how pole locations affect the magnitude and phase response of a second-order system.", "tier": 2}
+{"query": "Determine the output when x(t) = e^{-2t}u(t) is applied to an LTI system with h(t) = e^{-t}u(t).", "tier": 2}
+{"query": "What is a periodic signal?", "tier": 1}
+{"query": "What is a pole?", "tier": 1}
+{"query": "Is the Dirac delta covered in this course?", "tier": 1}
+{"query": "Analyze the stability of x(t) = cos(5t).", "tier": 2}
+{"query": "What is the difference between the DFT and the DTFT, and why does it matter?", "tier": 2}
+{"query": "Contrast sampling with quantization in terms of complexity and accuracy.", "tier": 2}
+{"query": "Derive the autocorrelation from first principles.", "tier": 2}
+{"query": "Find the Fourier transform of x[n] = 0.5^n u[n] and sketch it.", "tier": 2}
+{"query": "What is the symbol used for the unit step function?", "tier": 1}
+{"query": "Walk me through solving a convolution integral of two exponentials.", "tier": 2}
+{"query": "Which lecture covers an FIR filter?", "tier": 1}
+{"query": "What is the formula for the transfer function?", "tier": 1}
+{"query": "What is quantization in one line?", "tier": 1}
+{"query": "What is meant by windowing?", "tier": 1}
+{"query": "Meaning of an IIR filter?", "tier": 1}
+{"query": "Which lecture covers the Fourier transform?", "tier": 1}
+{"query": "Give the definition of time invariance.", "tier": 1}
+{"query": "Explain Parseval's theorem.", "tier": 1}
+{"query": "What does cross-correlation mean?", "tier": 1}
+{"query": "Define the region of convergence.", "tier": 1}
+{"query": "Define the Nyquist rate.", "tier": 1}
+{"query": "Is linearity covered in this course?", "tier": 1}
+{"query": "hello", "tier": 1}
+{"query": "Give the definition of the frequency response.", "tier": 1}
+{"query": "Using the bilinear transform, convert H(s) = 1/(s+1) to H(z) with T = 1 and explain frequency warping.", "tier": 2}
+{"query": "Compute the frequency response for H(s) = (s+1)/(s^2 + 3s + 2).", "tier": 2}
+{"query": "Briefly, what is the inverse Z-transform?", "tier": 1}
+{"query": "Find the impulse response of x(t) = e^{-|t|}.", "tier": 2}
+{"query": "Compare linear convolution and circular convolution and explain when to use each.", "tier": 2}
+{"query": "what is the transfer function", "tier": 1}
+{"query": "explain the FFT simply", "tier": 1}
+{"query": "What is the formula for the bilinear transform?", "tier": 1}
+{"query": "Give a one-sentence definition of causality.", "tier": 1}
+{"query": "Give a one-sentence definition of the sampling theorem.", "tier": 1}
+{"query": "Is the Fourier transform linear?", "tier": 1}
+{"query": "Is the Z-transform covered in this course?", "tier": 1}
+{"query": "Explain the unit step function.", "tier": 1}
+{"query": "Define aliasing.", "tier": 1}
+{"query": "Determine the output when x(t) = e^{-|t|} is applied to an LTI system with h(t) = e^{-t}u(t).", "tier": 2}
+{"query": "What is the difference between FIR filters and IIR filters, and why does it matter?", "tier": 2}
+{"query": "Which lecture covers the Fourier series?", "tier": 1}
+{"query": "Solve: find the Laplace transform for x[n] = 0.5^n u[n].", "tier": 2}
+{"query": "Compute the Fourier transform for x[n] = 0.5^n u[n].", "tier": 2}
+{"query": "What is the formula for amplitude modulation?", "tier": 1}
+{"query": "explain windowing simply", "tier": 1}
+{"query": "Calculate the autocorrelation of h(t) = e^{-t}u(t), showing all steps.", "tier": 2}
+{"query": "Explain an FIR filter.", "tier": 1}
+{"query": "My Python convolution result is shifted by one sample, what is wrong with my code?", "tier": 2}
+{"query": "Give the definition of causality.", "tier": 1}
+{"query": "Contrast the Fourier transform with the Laplace transform in terms of complexity and accuracy.", "tier": 2}
+{"query": "My MATLAB code for the FFT gives 'Index exceeds matrix dimensions', how do I fix it?", "tier": 2}
+{"query": "What is the value of the unit step at t = 0?", "tier": 1}
+{"query": "What is the formula for the impulse response?", "tier": 1}
+{"query": "Prove the main property of the convolution step by step.", "tier": 2}
+{"query": "Which lecture covers zero padding?", "tier": 1}
+{"query": "Give a one-sentence definition of group delay.", "tier": 1}
+{"query": "What is meant by quantization?", "tier": 1}
+{"query": "What is the sampling frequency?", "tier": 1}
+{"query": "What is the Fourier transform in one line?", "tier": 1}
+{"query": "what is the convolution sum", "tier": 1}
+{"query": "Define convolution.", "tier": 1}
+{"query": "What is omega?", "tier": 1}
+{"query": "What is a zero of H(z)?", "tier": 1}
+{"query": "explain time invariance simply", "tier": 1}
+{"query": "Work out the autocorrelation for x[n] = u[n] - u[n-4].", "tier": 2}
+{"query": "Derive the Z-transform from first principles.", "tier": 2}
+{"query": "Give a one-sentence definition of convolution.", "tier": 1}
+{"query": "What is an even signal?", "tier": 1}
+{"query": "Define time invariance.", "tier": 1}
+{"query": "How do I solve a problem on the DFT for x[n] = u[n] - u[n-4]?", "tier": 2}
+{"query": "State the definition of autocorrelation.", "tier": 1}
+{"query": "hi", "tier": 1}
+{"query": "What is meant by the Fourier series?", "tier": 1}
+{"query": "Meaning of aliasing?", "tier": 1}
+{"query": "Solve: find the energy for x[n] = u[n] - u[n-4].", "tier": 2}
+{"query": "explain the Gibbs phenomenon simply", "tier": 1}
+{"query": "Meaning of phase response?", "tier": 1}
+{"query": "How do I solve a problem on the frequency response for x(t) = e^{-|t|}?", "tier": 2}
+{"query": "Compute the Z-transform for x[n] = 0.5^n u[n].", "tier": 2}
+{"query": "Briefly, what is the bilinear transform?", "tier": 1}
+{"query": "Work out the inverse Z-transform for x(t) = e^{-|t|}.", "tier": 2}
+{"query": "explain decimation simply", "tier": 1}
+{"query": "Calculate the autocorrelation of x(t) = e^{-2t}u(t), showing all steps.", "tier": 2}
+{"query": "Calculate the autocorrelation of x[n] = {1, 2, 3, 4}, showing all steps.", "tier": 2}
+{"query": "Explain interpolation.", "tier": 1}
+{"query": "Give the definition of the Laplace transform.", "tier": 1}
+{"query": "Is a Bode plot covered in this course?", "tier": 1}
+{"query": "Compare the FFT and the direct DFT and explain when to use each.", "tier": 2}
+{"query": "Find the impulse response of x[n] = 0.5^n u[n].", "tier": 2}
+{"query": "What does the sampling theorem mean?", "tier": 1}
+{"query": "Solve: find the DFT for x[n] = 0.5^n u[n].", "tier": 2}
+{"query": "Give the definition of the impulse response.", "tier": 1}
+{"query": "Find the convolution of H(s) = (s+1)/(s^2 + 3s + 2) and sketch it.", "tier": 2}
+{"query": "Determine the output when H(s) = (s+1)/(s^2 + 3s + 2) is applied to an LTI system with h(t) = e^{-t}u(t).", "tier": 2}
+{"query": "Find the poles and zeros of x(t) = t e^{-t} u(t) and comment on stability.", "tier": 2}
+{"query": "Can you tell me what the Z-transform is?", "tier": 1}
+{"query": "How do I solve a problem on the Fourier transform for x(t) = cos(5t)?", "tier": 2}
+{"query": "Define poles and zeros.", "tier": 1}
+{"query": "explain cross-correlation simply", "tier": 1}
+{"query": "Explain linearity.", "tier": 1}
+{"query": "what is decimation", "tier": 1}
+{"query": "Compute the 4-point DFT of x[n] = {1, 0, -1, 0} and then verify with the inverse DFT.", "tier": 2}
+{"query": "Explain how Butterworth relates to Chebyshev filters, with an example.", "tier": 2}
+{"query": "Show that convolution in time is multiplication in frequency.", "tier": 2}
+{"query": "Who proposed the Fourier series?", "tier": 1}
+{"query": "Why would an engineer choose energy signals over power signals?", "tier": 2}
+{"query": "Evaluate the autocorrelation for x[n] = {1, 2, 3, 4} and explain the result.", "tier": 2}
+{"query": "Meaning of the region of convergence?", "tier": 1}
+{"query": "What is the Dirac delta in one line?", "tier": 1}
+{"query": "What is the symbol used for amplitude modulation?", "tier": 1}
+{"query": "What does a Butterworth filter mean?", "tier": 1}
+{"query": "My plot of the DFT magnitude looks mirrored, what am I doing wrong in numpy?", "tier": 2}
+{"query": "what is linearity", "tier": 1}
+{"query": "Give a one-sentence definition of the bilinear transform.", "tier": 1}
+{"query": "Why would an engineer choose the DFT over the DTFT?", "tier": 2}
+{"query": "What does phase response mean?", "tier": 1}
+{"query": "What is the period of cos(2 pi t)?", "tier": 1}
+{"query": "What does causality mean?", "tier": 1}
+{"query": "Give a one-sentence definition of the FFT.", "tier": 1}
+{"query": "Is zero padding covered in this course?", "tier": 1}
+{"query": "Briefly, what is interpolation?", "tier": 1}
+{"query": "Define an LTI system.", "tier": 1}
+{"query": "What is the symbol used for BIBO stability?", "tier": 1}
+{"query": "What is the symbol used for the inverse Z-transform?", "tier": 1}
+{"query": "Solve: find the frequency response for x[n] = u[n] - u[n-4].", "tier": 2}
+{"query": "Give a one-sentence definition of poles and zeros.", "tier": 1}
+{"query": "Why would an engineer choose linear convolution over circular convolution?", "tier": 2}
+{"query": "Meaning of quantization?", "tier": 1}
+{"query": "Can you tell me what the FFT is?", "tier": 1}
+{"query": "Find the inverse Z-transform of x(t) = rect(t/T) and sketch it.", "tier": 2}
+{"query": "Define cross-correlation.", "tier": 1}
+{"query": "Which lecture covers BIBO stability?", "tier": 1}
+{"query": "Compute the Z-transform for x(t) = sin(100 pi t).", "tier": 2}
+{"query": "What is the formula for phase response?", "tier": 1}
+{"query": "Which lecture covers the transfer function?", "tier": 1}
+{"query": "Give the definition of aliasing.", "tier": 1}
+{"query": "State the definition of the unit step function.", "tier": 1}
+{"query": "Work out the convolution for x(t) = cos(5t).", "tier": 2}
+{"query": "What is interpolation in one line?", "tier": 1}
+{"query": "what is the frequency response", "tier": 1}
+{"query": "Is group delay covered in this course?", "tier": 1}
+{"query": "Give the definition of a Bode plot.", "tier": 1}
+{"query": "Meaning of the Gibbs phenomenon?", "tier": 1}
+{"query": "Evaluate the DFT for x(t) = sin(100 pi t) and explain the result.", "tier": 2}
+{"query": "Analyze the stability of x(t) = e^{-|t|}.", "tier": 2}
+{"query": "What does the Fourier series mean?", "tier": 1}
+{"query": "What is the unit of frequency?", "tier": 1}
+{"query": "Find the poles and zeros of H(z) = 1/(1 - 0.8 z^{-1}) and comment on stability.", "tier": 2}
+{"query": "Evaluate the autocorrelation for x(t) = sin(100 pi t) and explain the result.", "tier": 2}
+{"query": "Give a one-sentence definition of the DTFT.", "tier": 1}
+{"query": "Why does my filter output blow up when I implement this IIR difference equation in MATLAB?", "tier": 2}
+{"query": "Design a second-order Butterworth low-pass filter and find its poles.", "tier": 2}
+{"query": "Analyze the stability of x(t) = e^{-2t}u(t).", "tier": 2}
+{"query": "Find the poles and zeros of H(s) = (s+1)/(s^2 + 3s + 2) and comment on stability.", "tier": 2}
+{"query": "How do I solve a problem on the Z-transform for x(t) = sin(100 pi t)?", "tier": 2}
+{"query": "What is the symbol used for windowing?", "tier": 1}
+{"query": "good morning", "tier": 1}
+{"query": "Compare autocorrelation and cross-correlation and explain when to use each.", "tier": 2}
+{"query": "Analyze the stability of x[n] = u[n] - u[n-4].", "tier": 2}
+{"query": "Derive the inverse Z-transform from first principles.", "tier": 2}
+{"query": "What is the difference between the Fourier transform and the Laplace transform, and why does it matter?", "tier": 2}
+{"query": "Meaning of the convolution sum?", "tier": 1}
+{"query": "Give a one-sentence definition of the Nyquist rate.", "tier": 1}
+{"query": "Define the Z-transform.", "tier": 1}
+{"query": "Find the impulse response of x[n] = u[n] - u[n-4].", "tier": 2}
+{"query": "What is the Gibbs phenomenon?", "tier": 1}
+{"query": "thank you so much", "tier": 1}
+{"query": "What is the formula for an LTI system?", "tier": 1}
+{"query": "Determine whether x[n] = {1, 2, 3, 4} is causal and stable, and justify.", "tier": 2}
+{"query": "What does convolution mean?", "tier": 1}
+{"query": "explain Parseval's theorem simply", "tier": 1}
+{"query": "what is a Butterworth filter", "tier": 1}
+{"query": "explain poles and zeros simply", "tier": 1}
+{"query": "Meaning of the sampling theorem?", "tier": 1}
+{"query": "What is a continuous-time signal?", "tier": 1}
+{"query": "Give a one-sentence definition of the impulse response.", "tier": 1}
+{"query": "Why does zero padding not increase frequency resolution? Explain with the DFT definition.", "tier": 2}
+{"query": "Find the poles and zeros of x[n] = u[n] - u[n-4] and comment on stability.", "tier": 2}
+{"query": "State the definition of zero padding.", "tier": 1}
+{"query": "Explain how FIR filters relates to IIR filters, with an example.", "tier": 2}
+{"query": "What is the full form of DFT?", "tier": 1}
+{"query": "Design a low-pass FIR filter with cutoff 1 kHz using the Hamming window and explain each step.", "tier": 2}
+{"query": "How do I solve a problem on the Z-transform for x[n] = 0.5^n u[n]?", "tier": 2}
+{"query": "What is the Dirac delta?", "tier": 1}
+{"query": "What does the Nyquist rate mean?", "tier": 1}
+{"query": "What is a discrete-time signal?", "tier": 1}
+{"query": "What is the symbol used for the frequency response?", "tier": 1}
+{"query": "Evaluate the frequency response for x(t) = rect(t/T) and explain the result.", "tier": 2}
+{"query": "Prove the main property of the energy step by step.", "tier": 2}
+{"query": "What is the formula for the DTFT?", "tier": 1}
+{"query": "State the definition of the DFT.", "tier": 1}
+{"query": "What is meant by an FIR filter?", "tier": 1}
+{"query": "Contrast causal systems with stable systems in terms of complexity and accuracy.", "tier": 2}
+{"query": "Find the impulse response of x(t) = t e^{-t} u(t).", "tier": 2}
+{"query": "What is the difference between overlap-add and overlap-save, and why does it matter?", "tier": 2}
+{"query": "What is the formula for the Fourier transform?", "tier": 1}
+{"query": "Derive the Fourier transform from first principles.", "tier": 2}
+{"query": "What is the symbol used for an IIR filter?", "tier": 1}
+{"query": "Determine whether x(t) = cos(5t) is causal and stable, and justify.", "tier": 2}
+{"query": "What is the formula for the convolution sum?", "tier": 1}
+{"query": "What is the difference between sampling and quantization, and why does it matter?", "tier": 2}
+{"query": "What does the Laplace transform mean?", "tier": 1}
+{"query": "ok got it", "tier": 1}
+{"query": "What does LTI stand for?", "tier": 1}
+{"query": "Define the DFT.", "tier": 1}
+{"query": "What does ROC stand for?", "tier": 1}
+{"query": "Can you tell me what a Bode plot is?", "tier": 1}
+{"query": "thanks!", "tier": 1}
+{"query": "What is the difference between autocorrelation and cross-correlation, and why does it matter?", "tier": 2}
+{"query": "What is the difference between the FFT and the direct DFT, and why does it matter?", "tier": 2}
+{"query": "Determine the output when H(z) = 1/(1 - 0.8 z^{-1}) is applied to an LTI system with h(t) = e^{-t}u(t).", "tier": 2}
+{"query": "What is group delay in one line?", "tier": 1}
+{"query": "who are you?", "tier": 1}
+{"query": "Explain how energy signals relates to power signals, with an example.", "tier": 2}
+{"query": "Determine the output when x(t) = rect(t/T) is applied to an LTI system with h(t) = e^{-t}u(t).", "tier": 2}
+{"query": "What is the Laplace transform of u(t)?", "tier": 1}
+{"query": "Find the DFT of x[n] = {1, 2, 3, 4} and sketch it.", "tier": 2}
+{"query": "what is the inverse Z-transform", "tier": 1}
+{"query": "What is the difference between Butterworth and Chebyshev filters, and why does it matter?", "tier": 2}
+{"query": "Can you tell me what amplitude modulation is?", "tier": 1}
+{"query": "Work out the convolution for H(s) = (s+1)/(s^2 + 3s + 2).", "tier": 2}
+{"query": "Explain how causal systems relates to stable systems, with an example.", "tier": 2}

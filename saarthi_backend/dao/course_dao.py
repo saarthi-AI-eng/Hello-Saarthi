@@ -83,6 +83,20 @@ class CourseDAO:
         return c
 
     @staticmethod
+    async def list_by_owner(
+        db: AsyncSession, owner_id: int, limit: int = 100, offset: int = 0
+    ) -> list[Course]:
+        result = await db.execute(
+            select(Course).where(Course.owner_id == owner_id).order_by(Course.id).limit(limit).offset(offset)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def count_by_owner(db: AsyncSession, owner_id: int) -> int:
+        r = await db.execute(select(func.count()).select_from(Course).where(Course.owner_id == owner_id))
+        return r.scalar() or 0
+
+    @staticmethod
     async def delete(db: AsyncSession, course_id: int) -> bool:
         c = await CourseDAO.get_by_id(db, course_id)
         if c:

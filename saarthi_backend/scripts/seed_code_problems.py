@@ -31,16 +31,20 @@ _PROBLEMS = [
         "hints": [
             "H(f) = 1 / sqrt(1 + (f/fc)^(2n))",
             "Use 20*log10() to convert to dB",
-            "numpy linspace for frequency array",
+            "stdlib only — import math, not numpy (the lab runner may not have numpy)",
         ],
         "starter_code": {
             "python": (
-                "import numpy as np\n\n"
-                "# Butterworth Low-Pass Filter\n"
-                "def butterworth_magnitude(f, cutoff=1000, order=4):\n"
-                "    return 1 / np.sqrt(1 + (f / cutoff) ** (2 * order))\n\n"
-                "# TODO: compute frequency response and print table\n"
+                "import math\n\n"
+                "# Butterworth Low-Pass Filter (no numpy — runs on the eval laptop)\n"
+                "def butterworth_magnitude(f, cutoff=1000.0, order=4):\n"
+                "    return 1.0 / math.sqrt(1.0 + (f / cutoff) ** (2 * order))\n\n"
                 "freqs = [0, 500, 1000, 2000, 4000]\n"
+                "print('Freq (Hz) | Magnitude (dB)')\n"
+                "for f in freqs:\n"
+                "    mag = butterworth_magnitude(f)\n"
+                "    db = 20 * math.log10(mag) if mag > 0 else float('-inf')\n"
+                "    print(f'{f:8d}  | {db:7.2f}')\n"
             )
         },
         "topics": "DSP · Filters",
@@ -172,6 +176,20 @@ async def seed_code_problems(db: AsyncSession) -> None:
     count_result = await db.execute(select(func.count()).select_from(CodeProblem))
     count = count_result.scalar_one()
     if count > 0:
+        # Existing laptops already have the numpy Butterworth starter — rewrite it
+        # so Run no longer dies with ModuleNotFoundError.
+        rows = (await db.execute(select(CodeProblem))).scalars().all()
+        changed = False
+        for row in rows:
+            raw = row.starter_code_json or ""
+            if "import numpy" in raw or "import numpy" in (row.hints_json or ""):
+                fresh = next((p for p in _PROBLEMS if p["title"] == row.title), None)
+                if fresh:
+                    row.starter_code_json = json.dumps(fresh["starter_code"])
+                    row.hints_json = json.dumps(fresh["hints"])
+                    changed = True
+        if changed:
+            await db.commit()
         return
 
     for p in _PROBLEMS:

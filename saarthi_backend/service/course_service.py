@@ -291,6 +291,15 @@ async def list_enrolled_courses(
     return await _dao_fn(db, user_id, limit=limit, offset=offset)
 
 
+async def list_owned_courses(
+    db: AsyncSession, owner_id: int, limit: int = 100, offset: int = 0
+) -> tuple[list[Course], int]:
+    """Return only courses created by this teacher (owner_id match)."""
+    items = await CourseDAO.list_by_owner(db, owner_id, limit=limit, offset=offset)
+    total = await CourseDAO.count_by_owner(db, owner_id)
+    return items, total
+
+
 # ----- Classroom invites -----
 
 _INVITE_CHARS = string.ascii_letters + string.digits
@@ -308,6 +317,9 @@ async def create_invite(
     expires_in_hours: int = 72,
 ) -> ClassroomInvite:
     invite_code = _generate_invite_code()
+    if email.strip() == "*":
+        # Open class code shared with the whole class: give it a useful lifetime.
+        expires_in_hours = max(expires_in_hours, 30 * 24)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
     invite = await ClassroomInviteDAO.create(
         db,
@@ -328,10 +340,12 @@ async def join_by_invite_code(
     db: AsyncSession, user_id: int, user_email: str, invite_code: str
 ) -> tuple[Enrollment, Course] | None:
     """Accept an invite and enroll the user. Returns (enrollment, course) or None if invalid."""
-    invite = await ClassroomInviteDAO.get_by_code(db, invite_code)
+    invite = await ClassroomInviteDAO.get_by_code(db, invite_code.strip())
     if not invite:
         return None
-    if invite.accepted:
+    is_open_code = invite.email == "*"
+    # Personal invites are single-use; an open class code is shared by every student.
+    if invite.accepted and not is_open_code:
         return None
     if invite.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         return None
@@ -345,11 +359,13 @@ async def join_by_invite_code(
 
     existing = await EnrollmentDAO.get(db, user_id, invite.course_id)
     if existing:
-        await ClassroomInviteDAO.mark_accepted(db, invite.id)
+        if not is_open_code:
+            await ClassroomInviteDAO.mark_accepted(db, invite.id)
         return existing, course
 
     enrollment = await EnrollmentDAO.create(db, user_id, invite.course_id)
-    await ClassroomInviteDAO.mark_accepted(db, invite.id)
+    if not is_open_code:
+        await ClassroomInviteDAO.mark_accepted(db, invite.id)
     return enrollment, course
 
 

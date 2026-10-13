@@ -1,5 +1,6 @@
 from src.utils.state import AgentState
 from src.orchestrator.router import decompose_and_route
+from src.orchestrator.followup import rewrite_followup
 from src.tools.kb_ops import check_and_update_kb_index
 import logging
 
@@ -7,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def orchestrator_node(state: AgentState):
-    query = state["query"]
+    query = rewrite_followup(state["query"], state.get("messages") or [])
     logger.info(f"--- Orchestrator Processing: {query} ---")
 
     # Auto-reindex stale knowledge bases
@@ -19,9 +20,11 @@ def orchestrator_node(state: AgentState):
 
     if not sub_queries:
         return {
+            "query": query,
             "sub_queries": [],
             "current_expert": "saarthi_agent",
-            "results": {"execution_plan": []}
+            "results": {"execution_plan": []},
+            "plan": ["Answer the student"],
         }
 
     # If there are MULTIPLE sub-queries (multi-agent), run them all here
@@ -49,7 +52,8 @@ def orchestrator_node(state: AgentState):
                     from src.experts.base import run_expert
                     mode = "planning" if state.get("planning", False) else "rag"
                     res, trace = run_expert(expert_name, sub_query, mode=mode,
-                                           messages=state.get("messages", []))
+                                           messages=state.get("messages", []),
+                                           boost_terms=state.get("boost_terms") or None)
 
                 combined_results[expert_name] = res
                 combined_results[f"{expert_name}_trace"] = trace
@@ -59,14 +63,18 @@ def orchestrator_node(state: AgentState):
 
         # Return all results and mark as "multi_agent" so the UI knows
         return {
+            "query": query,
             "sub_queries": sub_queries,
             "current_expert": "multi_agent",
             "results": combined_results,
+            "plan": [f"{sq.expert.value}: {sq.query}" for sq in sub_queries],
         }
 
     # Single sub-query: route to the specific agent via the graph
     return {
+        "query": query,
         "sub_queries": sub_queries,
         "current_expert": sub_queries[0].expert.value,
-        "results": {"execution_plan": [sq.model_dump() for sq in sub_queries]}
+        "results": {"execution_plan": [sq.model_dump() for sq in sub_queries]},
+        "plan": [f"{sub_queries[0].expert.value}: {sub_queries[0].query}"],
     }

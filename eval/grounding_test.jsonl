@@ -1,0 +1,12 @@
+{"id": "gr-01", "query": "What is the Nyquist rate?", "scope": {"course_id": 1}, "covered": true}
+{"id": "gr-02", "query": "What is the region of convergence for a right-sided signal?", "scope": {"course_id": 1}, "covered": true}
+{"id": "gr-03", "query": "What is the Fourier transform of a rectangular pulse?", "scope": {"course_id": 1}, "covered": true}
+{"id": "gr-04", "query": "When is an LTI system BIBO stable?", "scope": {"course_id": 1}, "covered": true}
+{"id": "gr-05", "query": "Explain the convolution property", "scope": {"course_id": 2}, "covered": true}
+{"id": "gr-06", "query": "What is aliasing?", "scope": {"course_id": 2}, "covered": true}
+{"id": "gr-07", "query": "Who won the 2023 cricket world cup?", "scope": {"course_id": 1}, "covered": false}
+{"id": "gr-08", "query": "Write me a poem about the ocean", "scope": {"course_id": 1}, "covered": false}
+{"id": "gr-09", "query": "How do I train a convolutional neural network in PyTorch?", "scope": {"course_id": 1}, "covered": false}
+{"id": "gr-10", "query": "What is the capital of France?", "scope": {"course_id": 2}, "covered": false}
+{"id": "gr-11", "query": "Explain Kirchhoff's voltage law", "scope": {"course_id": 2}, "covered": false}
+{"id": "gr-12", "query": "What is the orange zebra theorem?", "scope": {"course_id": 2}, "covered": false}

@@ -62,3 +62,6 @@ clarification_*.txt
 literature_review.txt
 DIFF_SUMMARY.md
 VideoDownloadPackage/
+
+# AI eval run outputs (gold.jsonl and scripts are tracked)
+eval/reports/
