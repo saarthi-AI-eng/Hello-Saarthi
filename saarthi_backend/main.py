@@ -126,6 +126,10 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE saarthi_videos ADD COLUMN IF NOT EXISTS transcript_text TEXT"
             )
         )
+        # Same as migrations/009_assignment_hard_deadline.sql; the ORM model needs this column.
+        await conn.execute(text(
+            "ALTER TABLE saarthi_assignments ADD COLUMN IF NOT EXISTS hard_deadline BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS saarthi_code_problems (
                 id SERIAL PRIMARY KEY,

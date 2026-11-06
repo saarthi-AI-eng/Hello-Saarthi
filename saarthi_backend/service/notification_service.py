@@ -22,3 +22,7 @@ async def list_notifications(
 
 async def mark_read(db: AsyncSession, notification_id: int, user_id: int) -> bool:
     return await NotificationDAO.mark_read(db, notification_id, user_id)
+
+
+async def mark_all_read(db: AsyncSession, user_id: int) -> int:
+    return await NotificationDAO.mark_all_read(db, user_id)

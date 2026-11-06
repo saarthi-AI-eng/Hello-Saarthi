@@ -9,7 +9,8 @@ class QuizQuestionResponse(BaseModel):
     id: str
     questionText: str
     optionsJson: str
-    correctIndex: int
+    # None when sent to a student taking the quiz; the answer is revealed only after submit.
+    correctIndex: Optional[int] = None
     sortOrder: int
 
     class Config:
@@ -33,20 +34,37 @@ class QuizDetailResponse(QuizResponse):
     questions: List[QuizQuestionResponse]
 
 
+class QuizAnswerResult(BaseModel):
+    questionId: str
+    selectedIndex: Optional[int] = None
+    correctIndex: int
+    isCorrect: bool
+
+
 class QuizAttemptResponse(BaseModel):
     id: str
     quizId: str
     score: Optional[float] = None
     startedAt: str
     submittedAt: Optional[str] = None
+    # Filled only in the submit response, so the student can review their answers.
+    correctCount: Optional[int] = None
+    totalQuestions: Optional[int] = None
+    results: Optional[List[QuizAnswerResult]] = None
 
     class Config:
         populate_by_name = True
 
 
+class QuizAnswer(BaseModel):
+    questionId: str
+    selectedIndex: Optional[int] = Field(None, ge=0)
+
+
 class QuizAttemptSubmitRequest(BaseModel):
-    score: float = Field(..., ge=0, le=100)
-    answersJson: str = "[]"
+    """The server grades the attempt; any client-sent score is ignored."""
+
+    answers: List[QuizAnswer] = Field(default_factory=list)
 
 
 class QuizQuestionCreate(BaseModel):

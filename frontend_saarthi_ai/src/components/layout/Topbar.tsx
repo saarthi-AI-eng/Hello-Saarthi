@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Search, Bell, ChevronDown, Menu, LogOut, User, Settings, Sun, Moon } from 'lucide-react';
+import { Search, ChevronDown, Menu, LogOut, User, Settings, Sun, Moon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/auth.store';
 import { useSettingsStore } from '../../stores/settings.store';
 import { getInitials } from '../../lib/utils';
+import NotificationBell from './NotificationBell';
 import './Topbar.css';
 
 export default function Topbar() {
@@ -59,11 +60,7 @@ export default function Topbar() {
                         <Moon size={20} />
                     )}
                 </button>
-                {/* Notifications */}
-                <button className="topbar-icon-btn" aria-label="Notifications">
-                    <Bell size={20} />
-                    <span className="topbar-notif-badge">3</span>
-                </button>
+                <NotificationBell />
 
                 {/* Profile Dropdown */}
                 <div className="topbar-profile-wrapper">

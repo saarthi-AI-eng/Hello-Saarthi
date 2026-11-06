@@ -26,13 +26,26 @@ from saarthi_backend.utils.exceptions import NotFoundError, ValidationError
 router = APIRouter(prefix="/quizzes", tags=["quizzes"])
 
 
-def _question_to_response(q):
+def _question_to_response(q, include_answer: bool = True):
     return QuizQuestionResponse(
         id=str(q.id),
         questionText=q.question_text,
         optionsJson=q.options_json,
-        correctIndex=q.correct_index,
+        correctIndex=q.correct_index if include_answer else None,
         sortOrder=q.sort_order,
+    )
+
+
+def _attempt_to_response(a, results=None):
+    return QuizAttemptResponse(
+        id=str(a.id),
+        quizId=str(a.quiz_id),
+        score=a.score,
+        startedAt=a.started_at.isoformat() if a.started_at else "",
+        submittedAt=a.submitted_at.isoformat() if a.submitted_at else None,
+        correctCount=sum(1 for r in results if r.isCorrect) if results is not None else None,
+        totalQuestions=len(results) if results is not None else None,
+        results=results,
     )
 
 
@@ -68,12 +81,24 @@ async def list_quizzes(
     )
 
 
+# Declared before /{quiz_id}: FastAPI matches routes in order, and /{quiz_id} would
+# otherwise capture "peer-comparison" and reject it as a non-integer (422).
+@router.get("/peer-comparison", response_model=PeerComparisonResponse)
+async def peer_comparison(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Return the current user's score percentile against all peers."""
+    return await quiz_service.get_peer_comparison(db, user.id)
+
+
 @router.get("/{quiz_id}", response_model=QuizDetailResponse)
 async def get_quiz(
     quiz_id: int,
+    user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Get quiz with questions (for taking quiz)."""
+    """Get quiz with questions. Correct answers are included only for teachers and admins."""
     quiz, questions = await quiz_service.get_quiz_with_questions(db, quiz_id)
     if not quiz:
         raise NotFoundError("Quiz not found.", details=None)
@@ -85,7 +110,7 @@ async def get_quiz(
         durationMinutes=quiz.duration_minutes,
         passingScore=quiz.passing_score,
         questionCount=len(questions),
-        questions=[_question_to_response(q) for q in questions],
+        questions=[_question_to_response(q, include_answer=user.role in ("admin", "teacher")) for q in questions],
     )
 
 
@@ -100,13 +125,7 @@ async def start_attempt(
     if not a:
         raise NotFoundError("Quiz not found.", details=None)
     await db.commit()
-    return QuizAttemptResponse(
-        id=str(a.id),
-        quizId=str(a.quiz_id),
-        score=a.score,
-        startedAt=a.started_at.isoformat() if a.started_at else "",
-        submittedAt=a.submitted_at.isoformat() if a.submitted_at else None,
-    )
+    return _attempt_to_response(a)
 
 
 @router.post("/{quiz_id}/attempts/{attempt_id}/submit", response_model=QuizAttemptResponse)
@@ -117,20 +136,12 @@ async def submit_attempt(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Submit attempt with score and answers."""
-    attempt = await quiz_service.submit_attempt(
-        db, attempt_id, user.id, score=body.score, answers_json=body.answersJson
+    """Submit answers. The server grades them and returns the score with per-question results."""
+    attempt, results = await quiz_service.submit_attempt(
+        db, quiz_id, attempt_id, user.id, answers=body.answers
     )
-    if not attempt:
-        raise NotFoundError("Attempt not found.", details=None)
     await db.commit()
-    return QuizAttemptResponse(
-        id=str(attempt.id),
-        quizId=str(attempt.quiz_id),
-        score=attempt.score,
-        startedAt=attempt.started_at.isoformat() if attempt.started_at else "",
-        submittedAt=attempt.submitted_at.isoformat() if attempt.submitted_at else None,
-    )
+    return _attempt_to_response(attempt, results)
 
 
 @router.post("/{quiz_id}/questions", response_model=QuizQuestionResponse, status_code=201)
@@ -211,16 +222,7 @@ async def list_my_attempts(
         db, user.id, quiz_id, limit=pagination.limit, offset=pagination.offset
     )
     return PaginatedResponse(
-        items=[
-            QuizAttemptResponse(
-                id=str(a.id),
-                quizId=str(a.quiz_id),
-                score=a.score,
-                startedAt=a.started_at.isoformat() if a.started_at else "",
-                submittedAt=a.submitted_at.isoformat() if a.submitted_at else None,
-            )
-            for a in attempts
-        ],
+        items=[_attempt_to_response(a) for a in attempts],
         total=total,
         limit=pagination.limit,
         offset=pagination.offset,
@@ -241,17 +243,6 @@ async def generate_adaptive_quiz(
     """
     result = await quiz_service.generate_adaptive_quiz(db, user.id, body)
     return result
-
-
-# ─── Peer Comparison ──────────────────────────────────────────────────────────
-
-@router.get("/peer-comparison", response_model=PeerComparisonResponse)
-async def peer_comparison(
-    user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """Return the current user's score percentile against all peers."""
-    return await quiz_service.get_peer_comparison(db, user.id)
 
 
 # ─── Grounded MCQ generation (AI WBS 3.5.1) ──────────────────────────────────

@@ -135,6 +135,7 @@ async def create_video(
             type="video",
             title=f"{user.full_name or 'Instructor'} posted a new video lecture:",
         )
+        await course_service.notify_course_students(db, body.courseId, "video", "New video lecture", v.title)
     await db.commit()
     # Auto-fetch YouTube transcript in background — no admin action needed
     from saarthi_backend.service.indexing_service import auto_index_youtube_video

@@ -64,6 +64,28 @@ async def create_course(
     )
 
 
+async def update_course(
+    db: AsyncSession,
+    course_id: int,
+    title: str | None = None,
+    code: str | None = None,
+    instructor: str | None = None,
+    description: str | None = None,
+    thumbnail_emoji: str | None = None,
+    color: str | None = None,
+) -> Course | None:
+    return await CourseDAO.update(
+        db,
+        course_id,
+        title=title,
+        code=code,
+        instructor=instructor,
+        description=description,
+        thumbnail_emoji=thumbnail_emoji,
+        color=color,
+    )
+
+
 async def delete_course(db: AsyncSession, course_id: int) -> bool:
     return await CourseDAO.delete(db, course_id)
 
@@ -136,9 +158,21 @@ async def create_assignment(
             type="assignment",
             title="New assignment",
             body=f"{a.title} (due {a.due_date})",
-            link=f"/courses/{course_id}/assignments/{a.id}",
+            # The frontend has no per-assignment route; the course page lists its assignments.
+            link=f"/courses/{course_id}",
         )
     return a
+
+
+async def notify_course_students(
+    db: AsyncSession, course_id: int, type: str, title: str, body: str
+) -> None:
+    """Notify every enrolled student about something new in the course."""
+    enrollments = await EnrollmentDAO.list_by_course(db, course_id, limit=10_000, offset=0)
+    for e in enrollments:
+        await NotificationDAO.create(
+            db, user_id=e.user_id, type=type, title=title, body=body, link=f"/courses/{course_id}"
+        )
 
 
 async def update_assignment(

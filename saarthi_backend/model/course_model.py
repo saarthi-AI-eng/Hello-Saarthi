@@ -50,6 +50,8 @@ class Assignment(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     due_date: Mapped[str] = mapped_column(String(32), nullable=False)
+    # True: no submissions after the due date ("hard deadline"). False: late work is accepted and marked late.
+    hard_deadline: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     topic: Mapped[str | None] = mapped_column(String(128), nullable=True)
     attachments: Mapped[str | None] = mapped_column(Text, nullable=True)

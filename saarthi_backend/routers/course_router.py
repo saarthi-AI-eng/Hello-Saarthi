@@ -1,6 +1,9 @@
 """Courses, enrollments, assignments, materials, stream, file upload (under /api/courses)."""
 
+import json
+import mimetypes
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from typing import Annotated
@@ -16,13 +19,17 @@ from saarthi_backend.schema.course_schemas import (
     AssignmentCreate,
     AssignmentResponse,
     AssignmentSubmitRequest,
+    GradeRequest,
+    SubmissionResponse,
     AssignmentUpdate,
     CourseCreate,
+    CourseUpdate,
     CoursePersonResponse,
     CourseResponse,
     EnrollmentResponse,
     EnrollmentWithCourseResponse,
     InviteListItem,
+    MyInviteItem,
     InviteRequest,
     InviteResponse,
     JoinRequest,
@@ -39,7 +46,9 @@ from saarthi_backend.schema.course_schemas import (
     StreamItemUpdate,
 )
 from saarthi_backend.schema.common_schemas import PaginatedResponse, PaginationParams
-from saarthi_backend.dao.course_dao import StreamCommentDAO
+from saarthi_backend.dao.course_dao import AssignmentSubmissionDAO, ClassroomInviteDAO, StreamCommentDAO, list_course_people
+from saarthi_backend.dao.notification_dao import NotificationDAO
+from saarthi_backend.dao.user_dao import UserDAO
 from saarthi_backend.service import course_service
 from saarthi_backend.utils.exceptions import ForbiddenError, NotFoundError, ValidationError
 from saarthi_backend.utils.logging import get_logger
@@ -86,8 +95,32 @@ def _assignment_to_response(a, submission=None):
         points=a.points,
         topic=a.topic,
         attachments=a.attachments,
+        hardDeadline=bool(a.hard_deadline),
         createdAt=a.created_at.isoformat() if a.created_at else "",
+        submittedAt=submission.submitted_at.isoformat() if submission and submission.submitted_at else None,
+        attachmentUrl=submission.attachment_url if submission else None,
     )
+
+
+def _due_at(due_date: str) -> datetime | None:
+    """Due moment of an assignment. Newer dues are ISO with time zone; older date-only
+    dues count until the end of that day (UTC, so never stricter than the student's day)."""
+    try:
+        if len(due_date) == 10:
+            return datetime.fromisoformat(due_date + "T23:59:59+00:00")
+        due = datetime.fromisoformat(due_date.replace("Z", "+00:00"))
+        return due if due.tzinfo else due.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _closed_for_submissions(assignment) -> bool:
+    due = _due_at(assignment.due_date)
+    return bool(assignment.hard_deadline) and due is not None and datetime.now(timezone.utc) > due
+
+
+# Files in a submission are stored as a JSON list in the 512-character attachment_url column.
+_MAX_SUBMISSION_FILES_CHARS = 512
 
 
 def _uploads_filename_from_url(url: str) -> str | None:
@@ -209,6 +242,53 @@ async def list_courses(
     )
 
 
+@router.get("/my/invites", response_model=list[MyInviteItem])
+async def my_invites(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Pending email invites for the current user, shown as cards on the Courses page."""
+    out = []
+    seen_courses: set[int] = set()
+    for invite in await ClassroomInviteDAO.list_pending_for_email(db, user.email):
+        # Newest first: if the teacher invited twice, show the course once.
+        if invite.course_id in seen_courses:
+            continue
+        seen_courses.add(invite.course_id)
+        if await course_service.get_enrollment(db, user.id, invite.course_id):
+            continue  # already joined another way (class code)
+        course = await course_service.get_course(db, invite.course_id)
+        if not course:
+            continue
+        out.append(
+            MyInviteItem(
+                id=str(invite.id),
+                inviteCode=invite.invite_code,
+                courseId=str(course.id),
+                courseTitle=course.title,
+                courseCode=course.code,
+                instructor=course.instructor,
+                thumbnailEmoji=course.thumbnail_emoji,
+                expiresAt=invite.expires_at.isoformat(),
+            )
+        )
+    return out
+
+
+@router.post("/invites/{invite_id}/decline", status_code=204)
+async def decline_invite(
+    invite_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Reject an email invite addressed to the current user. The invite is removed."""
+    invite = await ClassroomInviteDAO.get_by_id(db, invite_id)
+    if not invite or invite.email != user.email.lower().strip():
+        raise NotFoundError("Invite not found.", details=None)
+    await ClassroomInviteDAO.delete(db, invite)
+    await db.commit()
+
+
 @router.get("/my/enrollments", response_model=PaginatedResponse[EnrollmentWithCourseResponse])
 async def my_enrollments(
     user: Annotated[User, Depends(get_current_user)],
@@ -311,18 +391,37 @@ async def create_course(
     return _course_to_response(course)
 
 
+@router.patch("/{course_id}", response_model=CourseResponse)
+async def update_course(
+    course_id: int,
+    body: CourseUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Update course details (its teacher or an admin)."""
+    await _owned_course(db, user, course_id)
+    course = await course_service.update_course(
+        db,
+        course_id,
+        title=body.title,
+        code=body.code,
+        instructor=body.instructor,
+        description=body.description,
+        thumbnail_emoji=body.thumbnailEmoji,
+        color=body.color,
+    )
+    await db.commit()
+    return _course_to_response(course)
+
+
 @router.delete("/{course_id}", status_code=204)
 async def delete_course(
     course_id: int,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Delete course (admin/teacher). Cascades to related course data."""
-    if user.role not in ("admin", "teacher"):
-        raise ValidationError("Forbidden.", details=None)
-    course = await course_service.get_course(db, course_id)
-    if not course:
-        raise NotFoundError("Course not found.", details=None)
+    """Delete course (its teacher or an admin). Cascades to related course data."""
+    await _owned_course(db, user, course_id)
     await course_service.delete_course(db, course_id)
     await db.commit()
 
@@ -516,6 +615,7 @@ async def create_assignment(
         topic=body.topic,
         attachments=body.attachments,
     )
+    a.hard_deadline = body.hardDeadline
     await course_service.create_stream_item(
         db,
         course_id=course_id,
@@ -554,6 +654,8 @@ async def update_assignment(
         topic=body.topic,
         attachments=body.attachments,
     )
+    if body.hardDeadline is not None:
+        updated.hard_deadline = body.hardDeadline
     await db.commit()
     return _assignment_to_response(updated)
 
@@ -590,6 +692,13 @@ async def submit_assignment(
     assignment = await course_service.get_assignment(db, assignment_id)
     if not assignment or assignment.course_id != course_id:
         raise NotFoundError("Assignment not found.", details=None)
+    existing = await course_service.get_submission(db, user.id, assignment_id)
+    if existing and existing.status == "graded":
+        raise ValidationError("This assignment has already been graded.", details=None)
+    if _closed_for_submissions(assignment):
+        raise ValidationError("The deadline has passed and this assignment no longer accepts work.", details=None)
+    if body.attachmentUrl and len(body.attachmentUrl) > _MAX_SUBMISSION_FILES_CHARS:
+        raise ValidationError("Too many files attached. Remove some and try again.", details=None)
     sub = await course_service.submit_assignment(
         db,
         user.id,
@@ -601,14 +710,110 @@ async def submit_assignment(
     return {"success": True, "submissionId": str(sub.id)}
 
 
+@router.post("/{course_id}/assignments/{assignment_id}/unsubmit", response_model=dict)
+async def unsubmit_assignment(
+    course_id: int,
+    assignment_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Take back turned-in work so it can be changed (files are kept), as in Google Classroom."""
+    await _course_for_member(db, user, course_id)
+    assignment = await course_service.get_assignment(db, assignment_id)
+    if not assignment or assignment.course_id != course_id:
+        raise NotFoundError("Assignment not found.", details=None)
+    sub = await course_service.get_submission(db, user.id, assignment_id)
+    if not sub or sub.status != "submitted":
+        raise ValidationError("There is no turned-in work to unsubmit.", details=None)
+    if _closed_for_submissions(assignment):
+        raise ValidationError("The deadline has passed, so this work could not be turned in again.", details=None)
+    sub.status = "pending"
+    sub.submitted_at = None
+    await db.commit()
+    return {"success": True}
+
+
+@router.get("/{course_id}/assignments/{assignment_id}/submissions", response_model=list[SubmissionResponse])
+async def list_submissions(
+    course_id: int,
+    assignment_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Every enrolled student's work on this assignment, including students who have not turned it in."""
+    await _owned_course(db, user, course_id)
+    assignment = await course_service.get_assignment(db, assignment_id)
+    if not assignment or assignment.course_id != course_id:
+        raise NotFoundError("Assignment not found.", details=None)
+    subs = {s.user_id: s for s in await AssignmentSubmissionDAO.list_by_assignment(db, assignment_id)}
+    out = []
+    for _enrollment, student in await list_course_people(db, course_id, limit=1000, offset=0):
+        s = subs.get(student.id)
+        out.append(
+            SubmissionResponse(
+                userId=str(student.id),
+                studentName=student.full_name or student.email,
+                studentEmail=student.email,
+                status=s.status if s else "pending",
+                submittedAt=s.submitted_at.isoformat() if s and s.submitted_at else None,
+                attachmentUrl=s.attachment_url if s else None,
+                grade=s.grade if s else None,
+            )
+        )
+    return out
+
+
+@router.put("/{course_id}/assignments/{assignment_id}/submissions/{student_id}/grade", response_model=SubmissionResponse)
+async def grade_submission(
+    course_id: int,
+    assignment_id: int,
+    student_id: int,
+    body: GradeRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Set or clear a student's grade (course teacher or admin). The student is notified."""
+    await _owned_course(db, user, course_id)
+    assignment = await course_service.get_assignment(db, assignment_id)
+    if not assignment or assignment.course_id != course_id:
+        raise NotFoundError("Assignment not found.", details=None)
+    if body.grade is not None and body.grade > assignment.points:
+        raise ValidationError(f"Grade cannot be more than {assignment.points} points.", details=None)
+    if not await course_service.get_enrollment(db, student_id, course_id):
+        raise NotFoundError("Student is not in this course.", details=None)
+    sub = await AssignmentSubmissionDAO.set_grade(db, student_id, assignment_id, body.grade)
+    if body.grade is not None:
+        await NotificationDAO.create(
+            db,
+            user_id=student_id,
+            type="grade",
+            title="Assignment graded",
+            body=f"{assignment.title}: {body.grade:g}/{assignment.points}",
+            link=f"/courses/{course_id}",
+        )
+    await db.commit()
+    student = await UserDAO.get_by_id(db, student_id)
+    return SubmissionResponse(
+        userId=str(student_id),
+        studentName=student.full_name or student.email,
+        studentEmail=student.email,
+        status=sub.status,
+        submittedAt=sub.submitted_at.isoformat() if sub.submitted_at else None,
+        attachmentUrl=sub.attachment_url,
+        grade=sub.grade,
+    )
+
+
 # ----- Materials -----
 @router.get("/{course_id}/materials", response_model=PaginatedResponse[MaterialResponse])
 async def list_materials(
     course_id: int,
+    user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ):
-    """List materials for a course (paginated)."""
+    """List materials for a course (paginated). Members only."""
+    await _course_for_member(db, user, course_id)
     materials, total = await course_service.list_materials(
         db, course_id, limit=pagination.limit, offset=pagination.offset
     )
@@ -627,12 +832,8 @@ async def create_material(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Create material (admin/teacher)."""
-    if user.role not in ("admin", "teacher"):
-        raise ValidationError("Forbidden.", details=None)
-    course = await course_service.get_course(db, course_id)
-    if not course:
-        raise NotFoundError("Course not found.", details=None)
+    """Create material (course teacher or admin)."""
+    await _owned_course(db, user, course_id)
     m = await course_service.create_material(
         db,
         course_id=course_id,
@@ -642,14 +843,20 @@ async def create_material(
         description=body.description,
         topic=body.topic,
     )
+    # Attach the material to the stream post (same "___ATTACHMENTS___" format announcements use)
+    # so students can open it from the Stream. Store its id, not the raw file URL, so the
+    # members-only file route still guards access.
+    attachment = json.dumps([{"name": m.title, "materialId": str(m.id)}])
     await course_service.create_stream_item(
         db,
         course_id=course_id,
-        description=m.title,
+        description=f"{m.title}___ATTACHMENTS___{attachment}",
         author=user.full_name or "Instructor",
         type="material",
         title=f"{user.full_name or 'Instructor'} posted a new material:",
     )
+    course = await course_service.get_course(db, course_id)
+    await course_service.notify_course_students(db, course_id, "material", f"New material in {course.title}", m.title)
     await db.commit()
 
     # Auto-index uploaded files so the AI can answer questions from them immediately.
@@ -682,9 +889,8 @@ async def update_material(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Update material (admin/teacher)."""
-    if user.role not in ("admin", "teacher"):
-        raise ValidationError("Forbidden.", details=None)
+    """Update material (course teacher or admin)."""
+    await _owned_course(db, user, course_id)
     material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
@@ -757,8 +963,7 @@ async def reindex_material(
 ):
     """Re-trigger background indexing for an existing material (admin/teacher only).
     Use this for materials that existed before auto-indexing was deployed."""
-    if user.role not in ("admin", "teacher"):
-        raise ForbiddenError("Forbidden.", details=None)
+    await _owned_course(db, user, course_id)
     material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
@@ -789,9 +994,8 @@ async def delete_material(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Delete material (admin/teacher). Removes DB record and file from uploads if stored locally."""
-    if user.role not in ("admin", "teacher"):
-        raise ForbiddenError("Forbidden.", details=None)
+    """Delete material (course teacher or admin). Removes DB record and file from uploads if stored locally."""
+    await _owned_course(db, user, course_id)
     material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
@@ -822,14 +1026,11 @@ async def get_material_file(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Stream material file (PDF etc.) with Range support. Requires enrollment or teacher/admin."""
+    """Stream material file (PDF etc.) with Range support. Course members only."""
+    await _course_for_member(db, user, course_id)
     material = await course_service.get_material(db, material_id)
     if not material or material.course_id != course_id:
         raise NotFoundError("Material not found.", details=None)
-    if user.role not in ("admin", "teacher"):
-        enrollment = await course_service.get_enrollment(db, user.id, course_id)
-        if not enrollment:
-            raise ForbiddenError("You must be enrolled in this course to view materials.", details=None)
     filename = _uploads_filename_from_url(material.url or "")
     if not filename:
         raise NotFoundError("File not found.", details=None)
@@ -845,7 +1046,8 @@ async def get_material_file(
     if file_size is None or file_size == 0:
         raise NotFoundError("File not found.", details=None)
 
-    media_type = "application/pdf" if filename.lower().endswith(".pdf") else "application/octet-stream"
+    # Real type so browsers can show images and PDFs inline instead of treating them as downloads.
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     content_disp = f'inline; filename="{filename}"'
 
     range_header = request.headers.get("range")
@@ -918,7 +1120,7 @@ async def get_material_file(
 
 # ----- Stream -----
 async def _course_for_member(db: AsyncSession, user: User, course_id: int):
-    """Course if the user may read its stream (owner, admin or enrolled student); else 404/403."""
+    """Course if the user may read its content (owner, admin or enrolled student); else 404/403."""
     course = await course_service.get_course(db, course_id)
     if not course:
         raise NotFoundError("Course not found.", details=None)
@@ -926,12 +1128,21 @@ async def _course_for_member(db: AsyncSession, user: User, course_id: int):
         return course
     if user.role == "student" and await course_service.get_enrollment(db, user.id, course_id):
         return course
-    raise ForbiddenError("Join this course to see its stream.", details=None)
+    raise ForbiddenError("Join this course to see its content.", details=None)
 
 
 def _require_course_owner(user: User, course) -> None:
     if user.role != "admin" and not (user.role == "teacher" and course.owner_id == user.id):
-        raise ForbiddenError("Only the course teacher can post, edit or delete announcements.", details=None)
+        raise ForbiddenError("Only the course teacher can make this change.", details=None)
+
+
+async def _owned_course(db: AsyncSession, user: User, course_id: int):
+    """Course if the user is its teacher or an admin; else 404/403."""
+    course = await course_service.get_course(db, course_id)
+    if not course:
+        raise NotFoundError("Course not found.", details=None)
+    _require_course_owner(user, course)
+    return course
 
 
 def _comment_to_response(c):
@@ -985,6 +1196,12 @@ async def create_stream_item(
         type=body.type,
         title=body.title,
     )
+    if body.type == "announcement":
+        text_only = body.description.split("___ATTACHMENTS___")[0].strip()
+        preview = text_only if len(text_only) <= 120 else text_only[:117] + "…"
+        await course_service.notify_course_students(
+            db, course_id, "announcement", f"New announcement in {course.title}", preview or "Open the course to read it."
+        )
     await db.commit()
     return _stream_to_response(s)
 

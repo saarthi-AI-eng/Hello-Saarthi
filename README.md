@@ -35,9 +35,10 @@ Backend-only repository for **Saarthi.ai** (FastAPI). The frontend lives in a se
 
 5. **Database** – create DB then run migrations:
    ```bash
-   python -m saarthi_backend.migrations.run_migrations
+   cd saarthi_backend && python migrations/run_migrations.py
    ```
-   Uses `DATABASE_URL` from `saarthi_backend/.env` (or env).
+   Run it from inside `saarthi_backend`: settings read `.env` from the current folder,
+   so running from the repo root would miss `saarthi_backend/.env`.
 
 6. **Run server** (from repo root):
    ```bash

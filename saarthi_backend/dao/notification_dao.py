@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from saarthi_backend.model import Notification
@@ -64,3 +64,12 @@ class NotificationDAO:
         n.read_at = datetime.now(timezone.utc)
         await db.flush()
         return True
+
+    @staticmethod
+    async def mark_all_read(db: AsyncSession, user_id: int) -> int:
+        result = await db.execute(
+            update(Notification)
+            .where(Notification.user_id == user_id, Notification.read_at.is_(None))
+            .values(read_at=datetime.now(timezone.utc))
+        )
+        return result.rowcount or 0
