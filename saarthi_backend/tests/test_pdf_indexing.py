@@ -104,12 +104,21 @@ class TestChunking:
 # ─── Unit: skip unsupported file types ───────────────────────────────────────
 
 class TestIndexDocumentSync:
-    def test_skips_docx(self, tmp_path):
-        from saarthi_backend.service.indexing_service import _index_document_sync
-        f = tmp_path / "slides.docx"
-        f.write_bytes(b"fake docx content")
+    def test_skips_legacy_ppt(self, tmp_path):
+        from saarthi_backend.service.indexing_service import _index_document_sync, get_material_index_status
+        f = tmp_path / "slides.ppt"
+        f.write_bytes(b"fake ppt content")
         result = _index_document_sync(f, "Lecture Slides", course_id=1, material_id=1)
         assert result is False
+        assert get_material_index_status(1, 1)["status"] == "unsupported"
+
+    def test_unreadable_docx_reports_error(self, tmp_path):
+        from saarthi_backend.service.indexing_service import _index_document_sync, get_material_index_status
+        f = tmp_path / "notes.docx"
+        f.write_bytes(b"not really a docx")
+        result = _index_document_sync(f, "Notes", course_id=1, material_id=2)
+        assert result is False
+        assert get_material_index_status(1, 2)["status"] == "error"
 
     def test_skips_empty_txt(self, tmp_path):
         from saarthi_backend.service.indexing_service import _index_document_sync
@@ -189,8 +198,8 @@ class TestFetchFaissContext:
     def test_returns_empty_string_when_no_kb_exists(self):
         """If no FAISS indexes exist at all, should return '' without crashing."""
         from saarthi_backend.service import chat_service
-        with patch.object(chat_service, "_KB_AGENTS", []):
-            # No course_id, no agents — both branches find nothing
+        # _fetch_faiss_context now goes through the single retrieve() door
+        with patch("src.tools.retrieve.retrieve", return_value=[]):
             result = chat_service._fetch_faiss_context("what is fourier?", "Lecture 1", course_id=None)
         assert isinstance(result, str)
         assert result == ""
@@ -230,23 +239,26 @@ class TestFetchFaissContext:
 class TestApplyDocumentContext:
     def test_no_title_returns_message_unchanged(self):
         from saarthi_backend.service.chat_service import _apply_document_context
-        result = _apply_document_context("what is a signal?", None)
-        assert result == "what is a signal?"
+        prompt, grounded = _apply_document_context("what is a signal?", None)
+        assert prompt == "what is a signal?"
+        assert grounded is False
 
     def test_with_title_no_faiss_still_adds_context(self):
         from saarthi_backend.service.chat_service import _apply_document_context
         with patch("saarthi_backend.service.chat_service._fetch_faiss_context", return_value=""):
-            result = _apply_document_context("explain slide 3", "Lecture 1 - Signals", course_id=1)
-        assert "Lecture 1 - Signals" in result
-        assert "explain slide 3" in result
+            prompt, grounded = _apply_document_context("explain slide 3", "Lecture 1 - Signals", course_id=1)
+        assert "Lecture 1 - Signals" in prompt
+        assert "explain slide 3" in prompt
+        assert grounded is False
 
     def test_with_faiss_chunks_injected_into_prompt(self):
         from saarthi_backend.service.chat_service import _apply_document_context
         fake_chunk = "Fourier transform: decomposes periodic signals into sine waves."
         with patch("saarthi_backend.service.chat_service._fetch_faiss_context", return_value=fake_chunk):
-            result = _apply_document_context("what is fourier?", "Lecture 3", course_id=2)
-        assert fake_chunk in result
-        assert "Lecture 3" in result
-        assert "what is fourier?" in result
+            prompt, grounded = _apply_document_context("what is fourier?", "Lecture 3", course_id=2)
+        assert fake_chunk in prompt
+        assert "Lecture 3" in prompt
+        assert "what is fourier?" in prompt
+        assert grounded is True
         # Should use "grounding" language
-        assert "grounding" in result.lower() or "excerpts" in result.lower()
+        assert "grounding" in prompt.lower() or "excerpts" in prompt.lower()

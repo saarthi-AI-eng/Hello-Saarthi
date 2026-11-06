@@ -16,8 +16,11 @@ from saarthi_backend.schema.quiz_schemas import (
     AdaptiveQuizResponse,
     GeneratedQuizQuestion,
     PeerComparisonResponse,
+    QuizAnswer,
+    QuizAnswerResult,
     ScoreBucket,
 )
+from saarthi_backend.utils.exceptions import NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +55,39 @@ async def start_attempt(db: AsyncSession, user_id: int, quiz_id: int) -> QuizAtt
 
 async def submit_attempt(
     db: AsyncSession,
+    quiz_id: int,
     attempt_id: int,
     user_id: int,
-    score: float,
-    answers_json: str,
-) -> QuizAttempt | None:
-    return await QuizAttemptDAO.submit(
-        db, attempt_id, user_id, score=score, answers_json=answers_json
-    )
+    answers: list[QuizAnswer],
+) -> tuple[QuizAttempt, list[QuizAnswerResult]]:
+    """Grade the attempt against the stored correct answers and save it.
+
+    The score is the percentage of all quiz questions answered correctly, so
+    unanswered questions count as wrong. An attempt can be submitted only once.
+    """
+    attempt = await QuizAttemptDAO.get_by_id(db, attempt_id)
+    if not attempt or attempt.user_id != user_id or attempt.quiz_id != quiz_id:
+        raise NotFoundError("Attempt not found.", details=None)
+    if attempt.submitted_at is not None:
+        raise ValidationError("This attempt has already been submitted.", details=None)
+
+    questions = await QuizQuestionDAO.list_by_quiz(db, quiz_id)
+    selected = {a.questionId: a.selectedIndex for a in answers}
+    results = [
+        QuizAnswerResult(
+            questionId=str(q.id),
+            selectedIndex=selected.get(str(q.id)),
+            correctIndex=q.correct_index,
+            isCorrect=selected.get(str(q.id)) == q.correct_index,
+        )
+        for q in questions
+    ]
+    correct = sum(1 for r in results if r.isCorrect)
+    score = round(correct / len(questions) * 100, 2) if questions else 0.0
+
+    answers_json = json.dumps([{"questionId": r.questionId, "selectedIndex": r.selectedIndex} for r in results])
+    submitted = await QuizAttemptDAO.submit(db, attempt_id, user_id, score=score, answers_json=answers_json)
+    return submitted, results
 
 
 async def list_attempts(
@@ -171,8 +199,8 @@ async def generate_adaptive_quiz(
 ) -> AdaptiveQuizResponse:
     """Use GPT-4.1 to generate an adaptive quiz based on past attempt analysis."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        from src.utils.llm import async_openai, chat_model_name
+        client = async_openai()
 
         # Analyze past performance
         avg_score = 0.0
@@ -208,7 +236,7 @@ Focus on making questions that test deep understanding, not just memorization.
 For engineering students studying signals, systems, ML, or algorithms."""
 
         response = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[
                 {"role": "system", "content": _QUIZ_GEN_SYSTEM},
                 {"role": "user", "content": user_prompt},

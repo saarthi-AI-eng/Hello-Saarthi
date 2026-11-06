@@ -50,6 +50,8 @@ class Assignment(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     due_date: Mapped[str] = mapped_column(String(32), nullable=False)
+    # True: no submissions after the due date ("hard deadline"). False: late work is accepted and marked late.
+    hard_deadline: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     topic: Mapped[str | None] = mapped_column(String(128), nullable=True)
     attachments: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -116,4 +118,19 @@ class ClassroomInvite(Base):
     invite_code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class StreamComment(Base):
+    """Comment on a stream item (students and teachers comment; only teachers post announcements)."""
+
+    __tablename__ = "saarthi_stream_comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    stream_item_id: Mapped[int] = mapped_column(
+        ForeignKey("saarthi_stream_items.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("saarthi_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    author: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

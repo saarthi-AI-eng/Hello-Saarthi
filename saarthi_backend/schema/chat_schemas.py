@@ -36,6 +36,11 @@ class StreamMessageRequest(BaseModel):
     contextVideoId: Optional[int] = None
     contextVideoTitle: Optional[str] = None
     planning: bool = Field(False, description="If true, use ReAct planning mode (slower, shows thinking).")
+    answerMode: Literal["auto", "socratic", "direct"] = Field(
+        "auto",
+        description="auto: hints first for problem-solving questions (full solution after 3 hints); "
+        "socratic: hints for conceptual questions too; direct: always answer fully.",
+    )
 
 
 # ─── Study Plan ───────────────────────────────────────────────────────────────
@@ -215,3 +220,27 @@ class FlashcardDeckResponse(BaseModel):
     topic: str
     cards: List[Flashcard]
     generatedAt: str
+
+
+class FlashcardListResponse(BaseModel):
+    cards: List[Flashcard]
+    topics: List[str]
+
+
+# ─── Answer feedback (WBS 3.6.3 / spec 7.1, 9.5) ──────────────────────────────
+
+class AnswerFeedbackRequest(BaseModel):
+    """POST /api/chat/feedback — thumbs up/down on one AI answer."""
+    query: str = Field(..., min_length=1)
+    rating: Literal["up", "down"]
+    comment: Optional[str] = Field(None, max_length=1000)
+    courseId: Optional[int] = None
+    contextMaterialTitle: Optional[str] = None
+    contextVideoId: Optional[int] = None
+    cacheEntryId: Optional[int] = None
+    conversationId: Optional[str] = None
+
+
+class AnswerFeedbackResponse(BaseModel):
+    recorded: bool
+    cacheEvicted: int = 0

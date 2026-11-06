@@ -30,11 +30,34 @@ uploads/
 # Repo-specific (from main)
 Dataset/
 assets/
-docs/
 knowledge_base/
 saarthi_graph.png
-tests/
 app.py
+
+# Content management pipeline — raw/processed data (large, private, regenerable)
+data/raw/videos/*
+!data/raw/videos/.gitkeep
+!data/raw/videos/README.md
+data/raw/notes/*
+!data/raw/notes/.gitkeep
+!data/raw/notes/README.md
+data/processed/**/*.jsonl
+data/processed/**/*.txt
+data/processed/**/*.md
+!data/processed/**/README.md
+data/cleaned/**/*.jsonl
+!data/cleaned/**/README.md
+data/catalog/*.csv
+data/catalog/*.json
+data/catalog/*.txt
+!data/catalog/README.md
+data/demo/raw/*
+!data/demo/raw/.gitkeep
+data/evaluation/*.json
+!data/evaluation/README.md
+knowledge_base/unified/
+logs/*.json
+!logs/.gitkeep
 
 # Generated / runtime
 kb_status.json
@@ -62,3 +85,6 @@ clarification_*.txt
 literature_review.txt
 DIFF_SUMMARY.md
 VideoDownloadPackage/
+
+# AI eval run outputs (gold.jsonl and scripts are tracked)
+eval/reports/

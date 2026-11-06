@@ -64,6 +64,28 @@ async def create_course(
     )
 
 
+async def update_course(
+    db: AsyncSession,
+    course_id: int,
+    title: str | None = None,
+    code: str | None = None,
+    instructor: str | None = None,
+    description: str | None = None,
+    thumbnail_emoji: str | None = None,
+    color: str | None = None,
+) -> Course | None:
+    return await CourseDAO.update(
+        db,
+        course_id,
+        title=title,
+        code=code,
+        instructor=instructor,
+        description=description,
+        thumbnail_emoji=thumbnail_emoji,
+        color=color,
+    )
+
+
 async def delete_course(db: AsyncSession, course_id: int) -> bool:
     return await CourseDAO.delete(db, course_id)
 
@@ -136,9 +158,21 @@ async def create_assignment(
             type="assignment",
             title="New assignment",
             body=f"{a.title} (due {a.due_date})",
-            link=f"/courses/{course_id}/assignments/{a.id}",
+            # The frontend has no per-assignment route; the course page lists its assignments.
+            link=f"/courses/{course_id}",
         )
     return a
+
+
+async def notify_course_students(
+    db: AsyncSession, course_id: int, type: str, title: str, body: str
+) -> None:
+    """Notify every enrolled student about something new in the course."""
+    enrollments = await EnrollmentDAO.list_by_course(db, course_id, limit=10_000, offset=0)
+    for e in enrollments:
+        await NotificationDAO.create(
+            db, user_id=e.user_id, type=type, title=title, body=body, link=f"/courses/{course_id}"
+        )
 
 
 async def update_assignment(
@@ -165,6 +199,12 @@ async def update_assignment(
 
 async def delete_assignment(db: AsyncSession, assignment_id: int) -> bool:
     return await AssignmentDAO.delete(db, assignment_id)
+
+
+async def get_submission(
+    db: AsyncSession, user_id: int, assignment_id: int
+) -> AssignmentSubmission | None:
+    return await AssignmentSubmissionDAO.get(db, user_id, assignment_id)
 
 
 async def submit_assignment(
@@ -291,6 +331,15 @@ async def list_enrolled_courses(
     return await _dao_fn(db, user_id, limit=limit, offset=offset)
 
 
+async def list_owned_courses(
+    db: AsyncSession, owner_id: int, limit: int = 100, offset: int = 0
+) -> tuple[list[Course], int]:
+    """Return only courses created by this teacher (owner_id match)."""
+    items = await CourseDAO.list_by_owner(db, owner_id, limit=limit, offset=offset)
+    total = await CourseDAO.count_by_owner(db, owner_id)
+    return items, total
+
+
 # ----- Classroom invites -----
 
 _INVITE_CHARS = string.ascii_letters + string.digits
@@ -305,10 +354,14 @@ async def create_invite(
     course_id: int,
     invited_by: int,
     email: str,
-    expires_in_hours: int = 72,
+    expires_in_hours: int | None = None,
 ) -> ClassroomInvite:
     invite_code = _generate_invite_code()
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+    hours = expires_in_hours or 72
+    if email.strip() == "*":
+        # Open class code shared with the whole class: give it a useful lifetime.
+        hours = max(hours, 30 * 24)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
     invite = await ClassroomInviteDAO.create(
         db,
         course_id=course_id,
@@ -328,10 +381,12 @@ async def join_by_invite_code(
     db: AsyncSession, user_id: int, user_email: str, invite_code: str
 ) -> tuple[Enrollment, Course] | None:
     """Accept an invite and enroll the user. Returns (enrollment, course) or None if invalid."""
-    invite = await ClassroomInviteDAO.get_by_code(db, invite_code)
+    invite = await ClassroomInviteDAO.get_by_code(db, invite_code.strip())
     if not invite:
         return None
-    if invite.accepted:
+    is_open_code = invite.email == "*"
+    # Personal invites are single-use; an open class code is shared by every student.
+    if invite.accepted and not is_open_code:
         return None
     if invite.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         return None
@@ -345,11 +400,13 @@ async def join_by_invite_code(
 
     existing = await EnrollmentDAO.get(db, user_id, invite.course_id)
     if existing:
-        await ClassroomInviteDAO.mark_accepted(db, invite.id)
+        if not is_open_code:
+            await ClassroomInviteDAO.mark_accepted(db, invite.id)
         return existing, course
 
     enrollment = await EnrollmentDAO.create(db, user_id, invite.course_id)
-    await ClassroomInviteDAO.mark_accepted(db, invite.id)
+    if not is_open_code:
+        await ClassroomInviteDAO.mark_accepted(db, invite.id)
     return enrollment, course
 
 

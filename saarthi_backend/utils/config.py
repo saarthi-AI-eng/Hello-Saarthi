@@ -1,7 +1,9 @@
 """Load config from environment."""
 
 from functools import lru_cache
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -32,8 +34,12 @@ class Settings(BaseSettings):
     cookie_domain: str | None = None  # e.g. ".saarthi.ai" in prod
 
     # CORS: allow_credentials=True requires explicit origins (no "*")
-    # Comma-separated list; include Vite (5173) and CRA (3000) for local dev
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
+    # Comma-separated list; include Vite (5173, or 5174 when 5173 is taken) and CRA (3000) for local dev
+    cors_origins: str = (
+        "http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5174,http://127.0.0.1:5174"
+    )
 
     # Supabase — used by KB sync and data store
     supabase_url: str = ""
@@ -50,6 +56,27 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "noreply@saarthi.app"
     app_frontend_url: str = "https://saarthi.app"
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_asyncpg(cls, v: str) -> str:
+        """Accept plain postgres URLs (e.g. Neon's copy-paste string) for the asyncpg engine.
+
+        asyncpg needs the +asyncpg driver, takes ssl= instead of sslmode=, and rejects
+        channel_binding=.
+        """
+        parts = urlsplit(v.strip())
+        scheme = parts.scheme
+        if scheme in ("postgres", "postgresql", "postgresql+psycopg2"):
+            scheme = "postgresql+asyncpg"
+        if scheme != "postgresql+asyncpg":
+            return v
+        query = []
+        for key, value in parse_qsl(parts.query):
+            if key == "channel_binding":
+                continue
+            query.append(("ssl" if key == "sslmode" else key, value))
+        return urlunsplit((scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
     class Config:
         env_file = ".env"

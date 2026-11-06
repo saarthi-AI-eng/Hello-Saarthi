@@ -66,6 +66,23 @@ def _load_kb_status() -> dict:
     return {}
 
 
+def _count_chunks(pkl_path: Path) -> int:
+    """index.pkl written by LangChain FAISS is a (docstore, index_to_docstore_id) tuple."""
+    if not pkl_path.exists():
+        return 0
+    try:
+        import pickle
+        with open(pkl_path, "rb") as f:
+            store = pickle.load(f)
+        if isinstance(store, tuple) and store:
+            return len(getattr(store[0], "_dict", {}) or {})
+        if isinstance(store, dict):
+            return len(store.get("documents", []))
+    except Exception:
+        pass
+    return 0
+
+
 # ─── Pydantic models ─────────────────────────────────────────────────────────
 
 class UploadDocsResponse(BaseModel):
@@ -143,17 +160,7 @@ def _run_index_job(job_id: str, agent_name: str) -> None:
 
         if success:
             # Count chunks from index if pkl exists
-            chunks = 0
-            pkl_path = Path("knowledge_base") / agent_name / "vector_store" / "index.pkl"
-            if pkl_path.exists():
-                try:
-                    import pickle
-                    with open(pkl_path, "rb") as f:
-                        store = pickle.load(f)
-                    chunks = len(store.get("documents", [])) if isinstance(store, dict) else 0
-                except Exception:
-                    pass
-            job["chunks_created"] = chunks
+            job["chunks_created"] = _count_chunks(KB_ROOT / agent_name / "vector_store" / "index.pkl")
             job["status"] = "complete"
             job["progress"] = f"Done. {len(docs)} documents indexed."
         else:
@@ -342,17 +349,7 @@ def kb_stats():
         )
 
         # Best-effort chunk count from pkl
-        chunks = 0
-        pkl_path = index_dir / "index.pkl"
-        if pkl_path.exists():
-            try:
-                import pickle
-                with open(pkl_path, "rb") as f:
-                    store = pickle.load(f)
-                if isinstance(store, dict):
-                    chunks = len(store.get("documents", []))
-            except Exception:
-                pass
+        chunks = _count_chunks(index_dir / "index.pkl")
 
         stats[agent] = AgentStats(
             document_count=doc_count,
@@ -362,3 +359,25 @@ def kb_stats():
         )
 
     return KBStatsResponse(agents=stats)
+
+
+@router.get("/ai/metrics", dependencies=[Depends(verify_admin)])
+def ai_metrics(days: int = 14):
+    """AI-emitted metrics for Product / researcher dashboards: semantic-cache hit rate
+    (target >= 30% after 2 weeks), today's token use per tier, and the tier config."""
+    from src.cache.semantic_cache import get_cache
+    from src.utils import budget
+    from src.utils.llm import chat_model_name, tier2_configured
+
+    allowed, reason = budget.cloud_allowed()
+    return {
+        "cache": get_cache().stats(days=days),
+        "usage_today": budget.summary(),
+        "tiers": {
+            "tier1_model": chat_model_name(tier=1),
+            "tier2_model": chat_model_name(tier=2) if tier2_configured() else None,
+            "tier2_allowed": allowed,
+            "tier2_reason": reason,
+        },
+        "traces_dir": "knowledge_base/traces",
+    }

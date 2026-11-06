@@ -35,3 +35,29 @@ async def seed_demo_users(db: AsyncSession) -> None:
             institute=None,
         )
     await db.commit()
+    # One demo course so the student dashboard is not empty
+    try:
+        from sqlalchemy import select, func
+        from saarthi_backend.model.course_model import Course, Enrollment
+        n = (await db.execute(select(func.count()).select_from(Course))).scalar() or 0
+        if n == 0:
+            teacher = await UserDAO.get_by_email(db, "teacher@saarthi.ai")
+            student = await UserDAO.get_by_email(db, "student@saarthi.ai")
+            course = Course(
+                title="Demo Signals & Systems",
+                code="EE210",
+                instructor="Demo Teacher",
+                description="Sample course so you can click around locally. Add your own materials as teacher.",
+                thumbnail_emoji="📡",
+                color="#2563eb",
+                owner_id=teacher.id if teacher else None,
+            )
+            db.add(course)
+            await db.flush()
+            if student:
+                db.add(Enrollment(user_id=student.id, course_id=course.id, progress_percent=10.0))
+            if teacher:
+                db.add(Enrollment(user_id=teacher.id, course_id=course.id, progress_percent=0.0))
+            await db.commit()
+    except Exception:
+        await db.rollback()

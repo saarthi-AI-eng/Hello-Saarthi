@@ -1,5 +1,5 @@
 import logging
-from langchain_openai import ChatOpenAI
+from src.utils.llm import chat_llm
 from langchain_core.messages import SystemMessage, HumanMessage
 from src.schemas.models import ExpertResponse, ExpertName
 from src.utils.state import AgentState
@@ -40,7 +40,7 @@ def run_web_agent(query: str, messages: list = []) -> ExpertResponse:
     logger.info("--- Running Web Agent for: %s ---", query)
     search_results = _ddg_search(query)
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+    llm = chat_llm(fast=True, temperature=0.3)
     structured_llm = llm.with_structured_output(ExpertResponse, method="json_schema", strict=True)
 
     user_content = (

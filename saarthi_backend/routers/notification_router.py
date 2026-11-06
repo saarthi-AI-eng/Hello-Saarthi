@@ -46,6 +46,17 @@ async def list_notifications(
     )
 
 
+@router.patch("/read-all")
+async def mark_all_read(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Mark all of the current user's notifications as read."""
+    count = await notification_service.mark_all_read(db, user.id)
+    await db.commit()
+    return {"success": True, "updated": count}
+
+
 @router.patch("/{notification_id}/read")
 async def mark_read(
     notification_id: int,

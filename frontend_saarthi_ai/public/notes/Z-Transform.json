@@ -1,0 +1,426 @@
+{
+  "document_title": "Z-Transform Notes",
+  "subject": "Signal System",
+  "pages": [
+    {
+      "id": "1",
+      "text": "Z-Transform for Discrete-Time Signals\n\nZ-Transform is applicable for discrete-time intervals.\n\nTime → Frequency\n\nContinuous-time case:\nCTFT is a generalization of LT.\n\nMapping:\n( j\\omega \\longleftrightarrow s = \\sigma + j\\omega )\n\nLaplace Transform gives more complete information about signals.\n\nDiscrete-time case:\nDTFT is a generalization of Z-Transform.\n\nDTFT definition:\n( X(\\omega) = \\sum_{n=-\\infty}^{\\infty} x[n] e^{-j\\omega n} )\n\nx[n] may not be summable → DTFT may not exist.\n\nMapping:\n( e^{j\\omega} \\rightarrow z )\n\n( e^{j\\omega} = z )\n\nIf ( |z| = 1 ), we get DTFT.\nIf ( |z| \\neq 1 ), we get Z-Transform.\n\nIn LT, we worked with rectangular coordinates:\n( s = \\sigma + j\\omega )\n\nIn Z-Transform, we work with polar coordinates:\n( z = r e^{j\\omega} )\n\nr → distance from origin\n\\omega → angle with respect to real axis\n\nZ-Transform definition:\n( X(z) = \\sum_{n=-\\infty}^{\\infty} x[n] z^{-n} )\n\nprovided x[n] is summable.",
+      "metadata": {
+        "page_no": "1",
+        "type": "notes",
+        "subject": "Signal System",
+        "title": "Z-Transform",
+        "section": "DTFT and Z-Transform Relationship",
+        "all_explained_topics": [
+          "Time to Frequency Mapping",
+          "CTFT and Laplace Transform",
+          "DTFT Definition",
+          "Mapping e^{j\\omega} to z",
+          "Polar Representation of z",
+          "Z-Transform Definition"
+        ]
+      }
+    },
+    {
+      "id": "2",
+      "text": "Depending upon the value of r, the summation may converge or diverge.\n\nZ-Transform is exactly equal to the Fourier Transform if we replace e^{j\\omega} by z.\n\n( X(e^{j\\omega}) = \\sum_{n=-\\infty}^{\\infty} x[n] e^{-j\\omega n} )\n\nGiven a sequence x[n],\n\n( X(z) = \\sum_{n=-\\infty}^{\\infty} x[n] z^{-n} = Z\\{x[n]\\} )\n\nInverse relation:\n\n( x[n] \\longleftrightarrow X(z) )\n\nIf the Fourier Transform exists, then it must satisfy:\n\n( FT\\{x[n]\\} = Z\\{x[n]\\} \\big|_{z = e^{j\\omega}} )\n\nSketch of representation in the z-plane:\n\n( z = r e^{j\\omega} )\n\nThe complex z-plane consists of a real axis (Re{z}) and an imaginary axis (Im{z}). A circle of radius r centered at the origin represents |z| = r.\n\nThe most important case is when r = 1.\n\nIn this case:\n\n( z = e^{j\\omega} )\n\nwhich forms a circle of radius 1 in the z-plane.\n\n( |z| = 1 )\n\nThis is called the unit circle."
+,
+      "metadata": {
+        "page_no": "2",
+        "type": "notes",
+        "subject": "Signal System",
+        "title": "Z-Transform",
+        "section": "Relation between Fourier Transform and Z-Transform; z-Plane Representation",
+        "all_explained_topics": [
+          "Convergence depending on r",
+          "Relation between FT and Z-Transform",
+          "Z-Transform definition",
+          "Inverse relation x[n] and X(z)",
+          "Evaluation at z = e^{j\\omega}",
+          "z-Plane representation",
+          "Unit circle |z| = 1"
+        ]
+      }
+    },
+    {
+  "id": "3",
+  "text": "Whatever we have studied in the Laplace Transform with reference to the j\\omega-axis, we now replace that interpretation with reference to the unit circle. Inside the unit circle corresponds to one region and outside corresponds to another region.\n\nThe unit circle plays a significant role in the entire discussion of the Z-Transform.\n\nFor a given sequence x[n], if X(z) converges, then:\n\n( X(z) = \\sum_{n=-\\infty}^{\\infty} x[n] z^{-n} )\n\nSubstituting ( z = r e^{j\\omega} ),\n\n( X(z) = \\sum_{n=-\\infty}^{\\infty} x[n] (r e^{j\\omega})^{-n} )\n\n( X(z) = \\sum_{n=-\\infty}^{\\infty} x[n] r^{-n} e^{-j\\omega n} )\n\nThus,\n\n( X(z) = FT\\{ x[n] r^{-n} \\} )\n\nHence, the Fourier Transform of x[n] may not exist, but the Fourier Transform of the modified sequence x[n] r^{-n} may exist for an appropriate value of r.\n\nTherefore, the focus shifts to the parameter r rather than only on \\omega.\n\nIn the z-plane, the point ( z = r e^{j\\omega} ) represents a circle of radius r. If r is constant, the locus forms a circle.\n\nEvaluating on the unit circle:\n\n( X(e^{j\\omega}) = X(z) \\big|_{z = e^{j\\omega}} )\n\nThe existence of the Fourier Transform can be interpreted in terms of the Region of Convergence (ROC). If the ROC of X(z) includes the unit circle ( |z| = 1 ), then the Fourier Transform exists. Otherwise, the Fourier Transform does not exist.",
+  "metadata": {
+    "page_no": "3",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Unit Circle and Convergence Interpretation",
+    "all_explained_topics": [
+      "Interpretation using Unit Circle",
+      "Substitution z = r e^{j\\omega}",
+      "Relation X(z) and Fourier Transform",
+      "Modified sequence x[n] r^{-n}",
+      "Role of parameter r",
+      "Evaluation on Unit Circle",
+      "ROC and Existence of Fourier Transform"
+         ]
+        }
+    },
+    {
+  "id": "4",
+  "text": "For the Fourier Transform of x[n] to exist, the Region of Convergence (ROC) of X(z) must include the unit circle, that is, it must contain ( |z| = 1 ).\n\nExample:\n\nLet\n\n( x[n] = a^n u[n] )\n\nwhere u[n] is the unit step sequence and n \\geq 0.\n\nThe Z-Transform is:\n\n( X(z) = \\sum_{n=0}^{\\infty} a^n z^{-n} )\n\nThis can be written as:\n\n( X(z) = \\sum_{n=0}^{\\infty} (a z^{-1})^n )\n\nThis is a geometric series. A geometric series\n\n( \\sum_{n=0}^{\\infty} r^n )\n\nconverges if\n\n( |r| < 1 ).\n\nHere, r = a z^{-1}. Therefore, convergence requires:\n\n( |a z^{-1}| < 1 )\n\nwhich implies:\n\n( |a| < |z| )\n\nThus, the Region of Convergence is:\n\n( |z| > |a| )\n\nIn the z-plane, this corresponds to all points outside a circle of radius |a| centered at the origin.\n\nHence,\n\n( X(z) = \\frac{1}{1 - a z^{-1}} )\n\nAlternatively, multiplying numerator and denominator by z:\n\n( X(z) = \\frac{z}{z - a} )\n\nThis shows a pole at z = a.\n\nThe pole is located at z = a in the z-plane, and the ROC is the region outside the circle |z| = |a|.\n\nConclusion:\n\nFor the Fourier Transform to exist, the ROC must include the unit circle ( |z| = 1 ).\n\nFrom the ROC condition ( |z| > |a| ), the unit circle will be included only if:\n\n( |a| < 1 ).\n\nTherefore, the Fourier Transform of x[n] = a^n u[n] exists only when ( |a| < 1 ).",
+  "metadata": {
+    "page_no": "4",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Example: Z-Transform of a^n u[n] and ROC",
+    "all_explained_topics": [
+      "Condition for FT existence",
+      "Example x[n] = a^n u[n]",
+      "Geometric Series Representation",
+      "ROC Condition |a| < |z|",
+      "Pole at z = a",
+      "Unit Circle Inclusion Condition",
+      "Condition |a| < 1 for FT existence"
+    ]
+  }
+},
+{
+  "id": "5",
+  "text": "Given the sequence:\n\n( x[n] = a^n u[n] )\n\nwe previously obtained:\n\n( X(z) = \\frac{1}{1 - a z^{-1}} ), with ROC: ( |z| > |a| ).\n\nSpecial case:\n\nLet ( a = 1 ).\n\nThen:\n\n( x[n] = u[n] )\n\nThe Z-Transform becomes:\n\n( X(z) = \\frac{1}{1 - z^{-1}} )\n\nwith ROC:\n\n( |z| > 1 )\n\nThus, for x[n] = u[n], the Region of Convergence lies outside the unit circle.\n\nExample:\n\nLet\n\n( x[n] = -a^n u[-n-1] )\n\nThis represents a left-sided sequence.\n\nCompute the Z-Transform:\n\n( X(z) = \\sum_{n=-\\infty}^{-1} (-a^n) z^{-n} )\n\nRewrite the summation by changing the index. Let k = -n, where k runs from 1 to \\infty.\n\nThen:\n\n( X(z) = - \\sum_{k=1}^{\\infty} a^{-k} z^{k} )\n\nRewrite as a geometric series:\n\n( X(z) = - \\sum_{k=1}^{\\infty} (a^{-1} z)^k )\n\nThis is a geometric series of the form:\n\n( \\sum_{k=1}^{\\infty} r^k ) = \\frac{r}{1 - r}, provided ( |r| < 1 ).\n\nHere, r = a^{-1} z.\n\nThus, convergence requires:\n\n( |a^{-1} z| < 1 )\n\nwhich implies:\n\n( |z| < |a| )\n\nEvaluating the summation:\n\n( X(z) = - \\frac{a^{-1} z}{1 - a^{-1} z} )\n\nSimplifying:\n\n( X(z) = \\frac{1}{1 - a z^{-1}} )\n\nwith ROC:\n\n( |z| < |a| )\n\nThus, for this left-sided sequence, the Region of Convergence is inside a circle of radius |a|.\n\nConclusion:\n\nFor right-sided sequences such as a^n u[n], the ROC lies outside a circle.\n\nFor left-sided sequences such as -a^n u[-n-1], the ROC lies inside a circle.\n\nFor the left-sided case, the ROC is:\n\n( |z| < |a| ).",
+  "metadata": {
+    "page_no": "5",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Right-Sided and Left-Sided Sequences and ROC",
+    "all_explained_topics": [
+      "Special case a = 1",
+      "Z-Transform of u[n]",
+      "ROC outside unit circle",
+      "Left-sided sequence example",
+      "Geometric series derivation",
+      "ROC inside circle",
+      "Comparison of right-sided and left-sided sequences"
+    ]
+  }
+},
+{
+  "id": "6",
+  "text": "From previous derivations:\n\nFor the right-sided sequence:\n\n( X(z) = \\frac{1}{1 - a z^{-1}} ), with ROC: ( |z| > |a| )\n\nFor the left-sided sequence:\n\n( X(z) = \\frac{1}{1 - a z^{-1}} ), with ROC: ( |z| < |a| )\n\nThus, even though the algebraic expression of X(z) is the same, the Region of Convergence is different depending on the nature of the sequence.\n\nConclusion:\n\nROC of a difference equation is different for different sequences.\n\nFor right-sided sequences (RHS):\n\nROC is ( |z| > r )\n\nFor left-sided sequences (LHS):\n\nROC is ( |z| < r )\n\nIf a sequence is two-sided, then the ROC lies between two circles, provided the sequence converges in that region.\n\nIn general, the ROC does not include any poles.\n\nZ-Transform is a linear operation.\n\nIf\n\n( x[n] = a_1 x_1[n] + b_1 x_2[n] )\n\nthen\n\n( X(z) = a_1 X_1(z) + b_1 X_2(z) )\n\nand the ROC is at least the intersection of the individual ROCs of X_1(z) and X_2(z).\n\nExample:\n\n( x[n] = a^n u[n] + b^n u[n] )\n\nwhere a and b are real numbers.\n\nUsing linearity:\n\n( X(z) = \\frac{1}{1 - a z^{-1}} + \\frac{1}{1 - b z^{-1}} )\n\nThe overall ROC is the intersection of the two ROCs:\n\n( |z| > |a| ) and ( |z| > |b| )\n\nTherefore, the combined ROC is:\n\n( |z| > \\max(|a|, |b|) ).",
+  "metadata": {
+    "page_no": "6",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "ROC Comparison and Linearity Property",
+    "all_explained_topics": [
+      "Same X(z) with different ROC",
+      "ROC for RHS sequences",
+      "ROC for LHS sequences",
+      "Two-sided sequence ROC",
+      "ROC excludes poles",
+      "Linearity property of Z-Transform",
+      "Intersection of ROCs",
+      "Example using linearity"
+    ]
+  }
+},
+{
+  "id": "7",
+  "text": "Consider the sequence:\n\n( X(z) = \\frac{1}{1 - a z^{-1}} + \\frac{1}{1 - b z^{-1}} )\n\nThe Region of Convergence (ROC) is:\n\n( |z| > |a| ) and ( |z| > |b| )\n\nTherefore, the combined ROC is:\n\n( |z| > \\max(|a|, |b|) )\n\nIn the z-plane, poles are located at z = a and z = b, and the ROC lies outside the outermost pole.\n\nProperties of ROC:\n\n1. ROC is a ring (annular region) in the z-plane.\n\n2. ROC does not include any pole.\n\n3. If x[n] is a finite-duration sequence, then its Z-Transform exists for all z except possibly z = 0 or z = \\infty.\n\nFor finite-duration sequences, there is no question of convergence issues except at singular points.\n\nROC: All z except z = 0 and z = \\infty.\n\nEither one or both may be excluded depending on the sequence.\n\nExample:\n\nSuppose we have a right-sided sequence.\n\nCase 1:\n\n( X(z) = 1 + z^{-1} )\n\nROC: All z except possibly z = 0.\n\nCase 2:\n\n( X(z) = z + 1 + z^{-1} )\n\nROC: All z except possibly z = 0 and z = \\infty.\n\nThus, for finite-duration sequences, the ROC is the entire z-plane except at isolated singularities.",
+  "metadata": {
+    "page_no": "7",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Properties of ROC and Finite Duration Sequences",
+    "all_explained_topics": [
+      "Combined ROC for multiple poles",
+      "Poles and outermost pole condition",
+      "ROC as ring in z-plane",
+      "ROC excludes poles",
+      "Finite-duration sequence ROC",
+      "Singularities at z = 0 and z = infinity",
+      "Examples of finite sequences"
+    ]
+  }
+},
+{
+  "id": "8",
+  "text": "Case (iii): Left-sided sequence\n\nConsider:\n\n( X(z) = z + 1 )\n\nROC: All z except possibly z = 0.\n\nNext property:\n\nIf x[n] is a right-sided sequence and the Region of Convergence of X(z) includes the circle ( |z| = r_0 ), then the ROC includes all values of z such that ( |z| > r_0 ).\n\nIn particular, if x[n] is right-sided and the ROC includes the unit circle ( |z| = 1 ), then the ROC must be outside the unit circle.\n\nProof:\n\nGiven that X(z) converges for ( |z| = r_0 ), this implies:\n\n( \\sum_{n=0}^{\\infty} |x[n] r_0^{-n}| < \\infty )\n\nSince x[n] is right-sided, n ranges from 0 to \\infty.\n\nSuppose convergence holds at ( |z| = r_0 ), that is:\n\n( \\sum_{n=0}^{\\infty} |x[n]| r_0^{-n} < \\infty )  ...(1)\n\nNow consider any radius r such that r > r_0.\n\nThen:\n\n( r^{-n} < r_0^{-n} ) for all n \\ge 0.\n\nThus:\n\n( \\sum_{n=0}^{\\infty} |x[n]| r^{-n} \\le \\sum_{n=0}^{\\infty} |x[n]| r_0^{-n} )\n\nSince the right-hand side is finite from (1), the series also converges for all r > r_0.\n\nTherefore, if the Z-Transform converges for a particular radius r_0, it will also converge for all radii greater than r_0.\n\nHence, for right-sided sequences, the ROC is of the form:\n\n( |z| > r_0 ).",
+  "metadata": {
+    "page_no": "8",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "ROC Property for Right-Sided Sequences",
+    "all_explained_topics": [
+      "Left-sided example",
+      "ROC inclusion property",
+      "Right-sided sequence convergence",
+      "Proof using comparison test",
+      "Monotonic behavior with respect to r",
+      "ROC form |z| > r0"
+    ]
+  }
+},
+{
+  "id": "9",
+  "text": "Continuation of proof for right-sided sequences:\n\nIf n_0 = -m, then the summation can be split as:\n\n( \\sum_{n=-m}^{\\infty} |x[n]| r^{-n} )\n\nThis can be written as the sum of two parts:\n\n( \\sum_{n=-m}^{-1} |x[n]| r^{-n} + \\sum_{n=0}^{\\infty} |x[n]| r^{-n} )\n\nThe second summation has already been shown to be finite under the convergence condition.\n\nThe first summation contains only a finite number of terms (since n ranges from -m to -1), and therefore it is finite.\n\nHence, the total summation is finite.\n\nThus, convergence extends outward for right-sided sequences.\n\nProperty (5):\n\nIf x[n] is a left-sided sequence and the ROC of X(z) includes ( |z| = r_0 ), then the ROC extends to all values of z such that:\n\n( |z| < r_0 ).\n\nExamples:\n\nRight-sided example:\n\n( x[n] = a^n u[n] )\n\n( X(z) = \\frac{1}{1 - a z^{-1}} )\n\nROC: ( |z| > |a| )\n\nLeft-sided example:\n\n( x[n] = -u[-n-1] )\n\n( X(z) = \\frac{1}{1 - z^{-1}} )\n\nROC: ( |z| < 1 )\n\nCase (6):\n\nFor two-sided sequences (bilateral sequences), if the Z-Transform converges, the ROC lies between two circles in the z-plane.\n\nThus, the ROC is of the form:\n\n( r_1 < |z| < r_2 )\n\nwhere r_1 and r_2 correspond to boundaries determined by poles.\n\nTherefore, for bilateral sequences, the ROC is an annular region bounded by two circles.",
+  "metadata": {
+    "page_no": "9",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "ROC for Left-Sided and Two-Sided Sequences",
+    "all_explained_topics": [
+      "Completion of right-sided convergence proof",
+      "ROC property for left-sided sequences",
+      "Right-sided example",
+      "Left-sided example",
+      "Two-sided sequence ROC",
+      "Annular ROC region"
+    ]
+  }
+},
+{
+  "id": "10",
+  "text": "Case (6): Finite-duration sequence\n\nConsider a finite-duration sequence:\n\n( x[n] = a^n , \\quad 0 \\le n \\le N )\n\nand\n\n( x[n] = 0 , \\quad \\text{otherwise} )\n\nThe Region of Convergence (ROC) of a finite-duration sequence is all z except possibly z = 0 and z = \\infty.\n\nCompute the Z-Transform:\n\n( X(z) = \\sum_{n=0}^{N} a^n z^{-n} )\n\nThis can be written as:\n\n( X(z) = \\sum_{n=0}^{N} (a z^{-1})^n )\n\nUsing the finite geometric series formula:\n\n( \\sum_{n=0}^{N} r^n = \\frac{1 - r^{N+1}}{1 - r} )\n\nwe obtain:\n\n( X(z) = \\frac{1 - (a z^{-1})^{N+1}}{1 - a z^{-1}} )\n\nRewrite numerator and denominator in terms of z:\n\n( X(z) = \\frac{1 - a^{N+1} z^{-(N+1)}}{1 - a z^{-1}} )\n\nMultiply numerator and denominator by z^{N+1}:\n\n( X(z) = \\frac{z^{N+1} - a^{N+1}}{z^{N+1}(1 - a z^{-1})} )\n\nSimplify denominator:\n\n( 1 - a z^{-1} = \\frac{z - a}{z} )\n\nThus:\n\n( X(z) = \\frac{z^{N+1} - a^{N+1}}{z^{N} (z - a)} )\n\nThis shows that:\n\n• There is a pole at z = a.\n• There are N zeros obtained from the roots of ( z^{N+1} - a^{N+1} = 0 ).\n\nThe equation\n\n( z^{N+1} = a^{N+1} )\n\nimplies:\n\n( z = a e^{j \\frac{2\\pi k}{N+1}} ), \\quad k = 0, 1, 2, ..., N.\n\nThus, the zeros are equally spaced on a circle of radius |a| in the z-plane.\n\nFor finite-duration sequences, the ROC is the entire z-plane except possibly at z = 0 (if negative powers dominate) or z = \\infty (if positive powers dominate).",
+  "metadata": {
+    "page_no": "10",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Finite Duration Sequence and Pole-Zero Structure",
+    "all_explained_topics": [
+      "Finite-duration sequence definition",
+      "Finite geometric series derivation",
+      "Closed-form expression of X(z)",
+      "Pole at z = a",
+      "Zeros from z^{N+1} = a^{N+1}",
+      "Equally spaced zeros on circle",
+      "ROC of finite-duration sequence"
+    ]
+  }
+},
+{
+  "id": "11",
+  "text": "Example: Two-sided sequence\n\nConsider the sequence:\n\n( x[n] = b^{|n|} ), where 0 < b < 1.\n\nThis is a two-sided sequence that decays exponentially on both sides of n = 0.\n\nWe can write the sequence as:\n\n( x[n] = b^n u[n] + b^{-n} u[-n-1] )\n\nFor the right-sided part:\n\n( Z\\{ b^n u[n] \\} = \\frac{1}{1 - b z^{-1}} ), with ROC: ( |z| > |b| )\n\nFor the left-sided part:\n\n( Z\\{ b^{-n} u[-n-1] \\} = \\frac{1}{1 - b^{-1} z^{-1}} ), with ROC: ( |z| < \\frac{1}{|b|} )\n\nThus, the total Z-Transform is:\n\n( X(z) = \\frac{1}{1 - b z^{-1}} + \\frac{1}{1 - b^{-1} z^{-1}} )\n\nThe overall ROC is the intersection of the two individual ROCs:\n\n( |b| < |z| < \\frac{1}{|b|} )\n\nHence, the ROC is an annular region bounded by two circles of radii |b| and 1/|b|.\n\nSince 0 < b < 1, we have:\n\n( |b| < 1 < \\frac{1}{|b|} )\n\nTherefore, the unit circle ( |z| = 1 ) lies inside the ROC.\n\nConclusion:\n\nBecause the unit circle lies within the ROC, the Fourier Transform of x[n] = b^{|n|} exists.\n\nIf b > 1, then the unit circle would not lie inside the ROC, and the Fourier Transform would not exist.",
+  "metadata": {
+    "page_no": "11",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Two-Sided Exponential Sequence and ROC",
+    "all_explained_topics": [
+      "Two-sided sequence definition",
+      "Decomposition into right and left components",
+      "Z-Transform of each component",
+      "Intersection of ROCs",
+      "Annular ROC region",
+      "Condition for FT existence",
+      "Effect of b > 1"
+    ]
+  }
+},
+{
+  "id": "12",
+  "text": "Consider the expression:\n\n( X(z) = \\frac{1}{(1 - \\frac{1}{2} z^{-1})(1 - 2 z^{-1})} )\n\nThis expression has poles at:\n\n( z = \\frac{1}{2} ) and ( z = 2 ).\n\nFrom this algebraic form alone, the Region of Convergence (ROC) cannot be determined. The ROC depends on the nature of the corresponding time-domain sequence.\n\nThe poles are located at z = 1/2 and z = 2 in the z-plane.\n\nPossible Regions of Convergence:\n\n1. ( |z| > 2 )\n   This corresponds to a right-sided sequence.\n\n2. ( |z| < 1/2 )\n   This corresponds to a left-sided sequence.\n\n3. ( 1/2 < |z| < 2 )\n   This corresponds to a two-sided (bilateral) sequence.\n\nThus, the same rational function X(z) can correspond to different time-domain sequences depending on the ROC.\n\nTherefore, if X(z) is given only in terms of poles and zeros, the ROC must be specified explicitly to uniquely determine the corresponding sequence x[n].\n\nWithout specifying the ROC, the inverse Z-Transform is not uniquely defined.",
+  "metadata": {
+    "page_no": "12",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Importance of ROC Specification",
+    "all_explained_topics": [
+      "Rational function example",
+      "Poles at 1/2 and 2",
+      "Multiple possible ROCs",
+      "Right-sided ROC",
+      "Left-sided ROC",
+      "Two-sided ROC",
+      "Non-uniqueness without ROC"
+    ]
+  }
+},
+{
+  "id": "13",
+  "text": "Z-Transform Inversion\n\nGiven X(z), how do we determine x[n]?\n\nIf X(z) is evaluated on the unit circle, then:\n\n( X(e^{j\\omega}) )\n\nThis corresponds to the Fourier Transform of x[n], provided the Fourier Transform exists.\n\nFrom Fourier inversion formula:\n\n( x[n] = \\frac{1}{2\\pi} \\int_{-\\pi}^{\\pi} X(e^{j\\omega}) e^{j\\omega n} d\\omega )\n\nNow express the integral in terms of z.\n\nLet:\n\n( z = e^{j\\omega} )\n\nThen:\n\n( dz = j e^{j\\omega} d\\omega )\n\nThus:\n\n( d\\omega = \\frac{dz}{j z} )\n\nSubstitute into the inversion formula:\n\n( x[n] = \\frac{1}{2\\pi} \\int X(z) z^n \\frac{dz}{j z} )\n\nSimplifying:\n\n( x[n] = \\frac{1}{2\\pi j} \\int X(z) z^{n-1} dz )\n\nThe integration is taken over a closed contour in the z-plane corresponding to:\n\n( |z| = 1 )\n\nThus, the inverse Z-Transform is given by the contour integral:\n\n( x[n] = \\frac{1}{2\\pi j} \\oint X(z) z^{n-1} dz )\n\nwhere the contour lies within the Region of Convergence and encloses the origin.\n\nTherefore, inversion of the Z-Transform can be performed using complex integration along a closed contour in the z-plane.",
+  "metadata": {
+    "page_no": "13",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Inverse Z-Transform Using Contour Integration",
+    "all_explained_topics": [
+      "Question of inversion",
+      "Relation with Fourier inversion",
+      "Substitution z = e^{j\\omega}",
+      "Differential transformation dz = jz d\\omega",
+      "Contour integral form",
+      "Inverse Z-Transform formula",
+      "Integration over |z| = 1"
+    ]
+  }
+},
+{
+  "id": "14",
+  "text": "Inverse Z-Transform Using Residue Method\n\nThe inverse Z-Transform is given by the contour integral:\n\n( x[n] = \\frac{1}{2\\pi j} \\oint X(z) z^{n-1} dz )\n\nwhere the contour lies inside the Region of Convergence.\n\nIf X(z) is a rational function, then inversion can be performed using the residue theorem.\n\nProcedure:\n\nIf X(z) is expressed in partial fraction form, then:\n\n( X(z) = \\sum_{k} \\frac{A_k}{z - z_k} )\n\nMultiplying by z^{n-1}:\n\n( X(z) z^{n-1} = \\sum_{k} \\frac{A_k z^{n-1}}{z - z_k} )\n\nThe contour integral picks up the residues at the poles enclosed by the contour.\n\nHence, x[n] is obtained by summing the residues of X(z) z^{n-1} at the poles lying inside the chosen contour.\n\nExample:\n\nConsider:\n\n( X(z) = \\frac{1 - \\frac{1}{2} z^{-1}}{(1 + \\frac{1}{2} z^{-1})(1 + \\frac{1}{4} z^{-1})} )\n\nGiven ROC: ( |z| > \\frac{1}{2} )\n\nRewrite the expression in a more convenient form:\n\n( X(z) = \\frac{1 - \\frac{1}{2} z^{-1}}{(1 + \\frac{1}{2} z^{-1})(1 + \\frac{1}{4} z^{-1})} )\n\nThis can be decomposed using partial fractions:\n\n( X(z) = \\frac{4}{1 + \\frac{1}{2} z^{-1}} - \\frac{1}{1 + \\frac{1}{4} z^{-1}} ), with ROC: ( |z| > \\frac{1}{2} ).\n\nUsing known Z-Transform pairs:\n\n( \\frac{1}{1 - a z^{-1}} \\leftrightarrow a^n u[n] )\n\nwe identify the corresponding time-domain sequences accordingly, considering the specified ROC.",
+  "metadata": {
+    "page_no": "14",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Residue Method and Partial Fraction Expansion",
+    "all_explained_topics": [
+      "Inverse Z-Transform integral formula",
+      "Residue theorem application",
+      "Partial fraction expansion",
+      "Example rational function",
+      "ROC consideration",
+      "Mapping to known Z-transform pairs"
+    ]
+  }
+},
+{
+  "id": "15",
+  "text": "Continuation of Inverse Z-Transform Example\n\nFrom partial fraction expansion, suppose we obtained:\n\n( x[n] = -4 \\left( -\\frac{1}{2} \\right)^n u[n] + 3 \\left( -\\frac{1}{4} \\right)^n u[n] )\n\nFor the ROC:\n\n( |z| > \\frac{1}{2} )\n\nIf instead the ROC is:\n\n( |z| < \\frac{1}{2} )\n\nthen the corresponding time-domain sequence becomes left-sided, and we must interpret the terms accordingly using:\n\n( \\frac{1}{1 - a z^{-1}} \\leftrightarrow -a^n u[-n-1] )\n\nThus, the ROC determines whether the sequence is right-sided or left-sided.\n\nTrick for Inverse Z-Transform:\n\nIf\n\n( X(z) = \\frac{P(z)}{Q(z)} )\n\nrewrite it in terms of z^{-1} as:\n\n( X(z) = \\frac{P(z^{-1})}{Q(z^{-1})} )\n\nand expand using known geometric series formulas.\n\nCase (1):\n\nConsider:\n\n( X(z) = \\frac{1}{1 - a z^{-1}} ), with ROC: ( |z| > |a| ).\n\nWe expand using geometric series:\n\n( X(z) = 1 + a z^{-1} + a^2 z^{-2} + a^3 z^{-3} + \\dots )\n\nThus:\n\n( x[n] = a^n u[n] )\n\nCase (2):\n\nIf ROC: ( |z| < |a| ),\n\nrewrite as:\n\n( X(z) = - \\frac{z}{a} \\cdot \\frac{1}{1 - \\frac{z}{a}} )\n\nThen expand in positive powers of z:\n\n( X(z) = - \\frac{z}{a} \\left( 1 + \\frac{z}{a} + \\left( \\frac{z}{a} \\right)^2 + \\dots \\right) )\n\nThis yields:\n\n( x[n] = - a^n u[-n-1] )\n\nHence, the same algebraic expression produces different sequences depending on the ROC.\n\nTherefore, always check the ROC before performing inverse Z-Transform.",
+  "metadata": {
+    "page_no": "15",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Inverse Z-Transform Using Series Expansion",
+    "all_explained_topics": [
+      "Effect of ROC on inverse result",
+      "Right-sided vs left-sided interpretation",
+      "Geometric series expansion method",
+      "Trick using z^{-1} form",
+      "Expansion for |z| > |a|",
+      "Expansion for |z| < |a|",
+      "Importance of ROC in inversion"
+    ]
+  }
+},
+{
+  "id": "16",
+  "text": "Properties of Z-Transform\n\n1. Linearity\n\nIf\n\n( x_1[n] \\longleftrightarrow X_1(z) )\n\nand\n\n( x_2[n] \\longleftrightarrow X_2(z) )\n\nthen for constants a and b:\n\n( a x_1[n] + b x_2[n] \\longleftrightarrow a X_1(z) + b X_2(z) )\n\nThe Region of Convergence (ROC) is at least the intersection of the individual ROCs of X_1(z) and X_2(z).\n\nExample:\n\n( a^n u[n] \\longleftrightarrow \\frac{1}{1 - a z^{-1}} ), with ROC: ( |z| > |a| )\n\n( a^n u[-n-1] \\longleftrightarrow \\frac{1}{1 - a z^{-1}} ), with ROC: ( |z| < |a| )\n\nIf we take the difference:\n\n( a^n u[n] - a^n u[-n-1] )\n\nits Z-Transform becomes:\n\n( \\frac{1}{1 - a z^{-1}} - \\frac{1}{1 - a z^{-1}} )\n\nUnder appropriate ROC conditions, this can simplify to a rational expression representing an impulse sequence.\n\nTime Shifting Property\n\nIf\n\n( x[n] \\longleftrightarrow X(z) )\n\nthen\n\n( x[n - n_0] \\longleftrightarrow z^{-n_0} X(z) )\n\nThe ROC remains the same except possibly at z = 0 or z = \\infty.\n\nDerivation:\n\nStart with the definition:\n\n( X(z) = \\sum_{n=-\\infty}^{\\infty} x[n] z^{-n} )\n\nNow consider:\n\n( Z\\{ x[n - n_0] \\} = \\sum_{n=-\\infty}^{\\infty} x[n - n_0] z^{-n} )\n\nLet k = n - n_0, so that n = k + n_0.\n\nThen:\n\n( = \\sum_{k=-\\infty}^{\\infty} x[k] z^{-(k + n_0)} )\n\n( = z^{-n_0} \\sum_{k=-\\infty}^{\\infty} x[k] z^{-k} )\n\n( = z^{-n_0} X(z) )\n\nHence,\n\n( x[n - n_0] \\longleftrightarrow z^{-n_0} X(z) )\n\nwith ROC essentially unchanged except possibly at boundary points.",
+  "metadata": {
+    "page_no": "16",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Properties: Linearity and Time Shifting",
+    "all_explained_topics": [
+      "Linearity property",
+      "ROC intersection rule",
+      "Example of right and left sequences",
+      "Time shifting property",
+      "Derivation of time shift",
+      "Effect of shifting on ROC"
+    ]
+  }
+},
+{
+  "id": "17",
+  "text": "Effect of Time Shifting on ROC\n\nIf n_0 > 0 and\n\n( x[n - n_0] \\longleftrightarrow z^{-n_0} X(z) )\n\nthen multiplying by z^{-n_0} introduces a pole at z = 0.\n\nThus, even though the ROC may originally include the origin, the introduction of a pole at z = 0 requires exclusion of the origin from the modified ROC.\n\nIf n_0 < 0, that is, for x[n + |n_0|],\n\n( x[n - n_0] \\longleftrightarrow z^{-n_0} X(z) )\n\nwith n_0 negative, we are effectively multiplying by a positive power of z.\n\nIn this case, we introduce zeros at the origin rather than poles.\n\nTherefore, the ROC may include the origin unless cancellation occurs.\n\nIf a zero at z = 0 cancels a pole at z = 0, then cancellation may occur, and one must be careful while specifying the ROC.\n\nFrequency Shifting Property\n\nIf\n\n( x[n] \\longleftrightarrow X(z) )\n\nthen\n\n( e^{j\\omega_0 n} x[n] \\longleftrightarrow X(z e^{-j\\omega_0}) )\n\nDerivation:\n\nStart from the definition:\n\n( Z\\{ e^{j\\omega_0 n} x[n] \\} = \\sum_{n=-\\infty}^{\\infty} x[n] e^{j\\omega_0 n} z^{-n} )\n\nRewrite:\n\n( = \\sum_{n=-\\infty}^{\\infty} x[n] (z e^{-j\\omega_0})^{-n} )\n\nThus:\n\n( Z\\{ e^{j\\omega_0 n} x[n] \\} = X(z e^{-j\\omega_0}) )\n\nIf we evaluate on the unit circle, z = e^{j\\omega}, then:\n\n( X(z e^{-j\\omega_0}) = X(e^{j(\\omega - \\omega_0)}) )\n\nHence, multiplication by e^{j\\omega_0 n} in time corresponds to a frequency shift by \\omega_0 in the frequency domain.",
+  "metadata": {
+    "page_no": "17",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Time Shift and Frequency Shift Properties",
+    "all_explained_topics": [
+      "Effect of positive shift on ROC",
+      "Pole introduced at z = 0",
+      "Effect of negative shift",
+      "Zero at origin",
+      "Possible pole-zero cancellation",
+      "Frequency shifting property",
+      "Derivation of frequency shift",
+      "Relation on unit circle"
+    ]
+  }
+},
+{
+  "id": "18",
+  "text": "Effect of Frequency Shifting on ROC\n\nThe Region of Convergence (ROC) does not change under frequency shifting because the ROC depends on the magnitude |z| (distance from the origin) and not on the angle.\n\nIn general:\n\n( x[n] \\longleftrightarrow X(z) )\n\nIf we multiply by a complex exponential:\n\n( e^{j\\omega_0 n} x[n] \\longleftrightarrow X(z e^{-j\\omega_0}) )\n\nThis represents a rotation in the z-plane. The poles and zeros rotate by an angle \\omega_0, but their magnitudes remain unchanged.\n\nTherefore, the ROC, which depends only on |z|, remains the same.\n\nIf X(z) has a pole at z = p, then after frequency shifting, the pole moves to:\n\n( z = p e^{j\\omega_0} )\n\nThus, poles and zeros are rotated in the complex plane.\n\nTime Reversal Property\n\nIf\n\n( x[n] \\longleftrightarrow X(z) )\n\nthen\n\n( x[-n] \\longleftrightarrow X(z^{-1}) )\n\nDerivation:\n\nStart with the definition:\n\n( Z\\{ x[-n] \\} = \\sum_{n=-\\infty}^{\\infty} x[-n] z^{-n} )\n\nLet k = -n, so n = -k.\n\nThen:\n\n( = \\sum_{k=-\\infty}^{\\infty} x[k] z^{k} )\n\n( = \\sum_{k=-\\infty}^{\\infty} x[k] (z^{-1})^{-k} )\n\n( = X(z^{-1}) )\n\nEffect on ROC:\n\nIf the original ROC is ( r_1 < |z| < r_2 ), then under time reversal, the ROC becomes:\n\n( \\frac{1}{r_2} < |z| < \\frac{1}{r_1} ).\n\nThus, time reversal inverts the Region of Convergence with respect to the unit circle.",
+  "metadata": {
+    "page_no": "18",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Frequency Shift and Time Reversal Properties",
+    "all_explained_topics": [
+      "ROC independence from angle",
+      "Rotation of poles and zeros",
+      "Pole mapping p to p e^{j\\omega_0}",
+      "Time reversal property",
+      "Derivation of X(z^{-1})",
+      "ROC inversion under time reversal"
+    ]
+  }
+},
+{
+  "id": "19",
+  "text": "Convolution Property\n\nIf\n\n( x[n] \\longleftrightarrow X(z) )\n\nand\n\n( h[n] \\longleftrightarrow H(z) )\n\nthen the convolution in time domain satisfies:\n\n( Z\\{ x[n] * h[n] \\} = X(z) H(z) )\n\nwhere\n\n( (x * h)[n] = \\sum_{k=-\\infty}^{\\infty} x[k] h[n-k] )\n\nThe Region of Convergence is at least the intersection of the ROCs of X(z) and H(z).\n\nDifferentiation in the z-domain\n\nStarting from the definition:\n\n( X(z) = \\sum_{n=-\\infty}^{\\infty} x[n] z^{-n} )\n\nDifferentiate with respect to z:\n\n( \\frac{dX(z)}{dz} = \\sum_{n=-\\infty}^{\\infty} x[n] (-n) z^{-n-1} )\n\nMultiply both sides by -z:\n\n( -z \\frac{dX(z)}{dz} = \\sum_{n=-\\infty}^{\\infty} n x[n] z^{-n} )\n\nThus,\n\n( Z\\{ n x[n] \\} = -z \\frac{dX(z)}{dz} )\n\nThis property allows computation of sequences multiplied by n using differentiation in the z-domain.\n\nApplication Example\n\nConsider the known pair:\n\n( \\frac{1}{1 - a z^{-1}} \\longleftrightarrow a^n u[n] ), with ROC: ( |z| > |a| )\n\nUsing the differentiation property:\n\n( Z\\{ n a^n u[n] \\} = -z \\frac{d}{dz} \\left( \\frac{1}{1 - a z^{-1}} \\right) )\n\nCompute the derivative:\n\n( \\frac{d}{dz} \\left( \\frac{1}{1 - a z^{-1}} \\right) = \\frac{a z^{-2}}{(1 - a z^{-1})^2} )\n\nTherefore:\n\n( Z\\{ n a^n u[n] \\} = -z \\cdot \\frac{a z^{-2}}{(1 - a z^{-1})^2} )\n\nSimplifying:\n\n( Z\\{ n a^n u[n] \\} = \\frac{a z^{-1}}{(1 - a z^{-1})^2} )\n\nHence,\n\n( \\frac{a z^{-1}}{(1 - a z^{-1})^2} \\longleftrightarrow n a^n u[n] )\n\nThis demonstrates how differentiation in the z-domain corresponds to multiplication by n in the time domain.",
+  "metadata": {
+    "page_no": "19",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Convolution and Differentiation Properties",
+    "all_explained_topics": [
+      "Convolution property",
+      "Time-domain convolution definition",
+      "Differentiation property",
+      "Relation Z{n x[n]}",
+      "Application using geometric sequence",
+      "Derivation using differentiation",
+      "Final transform pair for n a^n u[n]"
+    ]
+  }
+},
+{
+  "id": "20",
+  "text": "Example (1):\n\nConsider the sequence:\n\n( x[n] = \\frac{a^n u[n]}{n} )\n\nUsing known Z-transform pairs and properties, this can be related to logarithmic forms obtained from integration properties in the z-domain.\n\nExample (2):\n\nGiven:\n\n( \\frac{a z^{-1}}{(1 - a z^{-1})^2} )\n\nWe know that:\n\n( \\frac{1}{1 - a z^{-1}} \\longleftrightarrow a^n u[n] )\n\nUsing the differentiation property:\n\n( Z\\{ n a^n u[n] \\} = \\frac{a z^{-1}}{(1 - a z^{-1})^2} )\n\nThus, the above expression corresponds to:\n\n( n a^n u[n] )\n\nInitial Value Theorem (IVT)\n\nApplicable for right-sided sequences where x[n] = 0 for n < 0.\n\nThe Z-transform is:\n\n( X(z) = \\sum_{n=0}^{\\infty} x[n] z^{-n} )\n\nAs z \\to \\infty, all terms containing z^{-n} for n \\ge 1 vanish.\n\nThus:\n\n( \\lim_{z \\to \\infty} X(z) = x[0] )\n\nTherefore, the Initial Value Theorem states:\n\n( x[0] = \\lim_{z \\to \\infty} X(z) )\n\nprovided the limit exists.\n\nIf x[0] = 0, then the limit of X(z) as z \\to \\infty is zero.\n\nHence, the initial value of a right-sided sequence can be obtained directly from the behavior of X(z) at infinity.",
+  "metadata": {
+    "page_no": "20",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Differentiation Examples and Initial Value Theorem",
+    "all_explained_topics": [
+      "Example using division by n",
+      "Second-order pole example",
+      "Relation with n a^n u[n]",
+      "Initial Value Theorem",
+      "Limit as z approaches infinity",
+      "Condition for right-sided sequences"
+    ]
+  }
+},
+{
+  "id": "21",
+  "text": "Initial Value Theorem (continued)\n\nFrom the Initial Value Theorem:\n\n( x[0] = \\lim_{z \\to \\infty} X(z) )\n\nIf X(z) is written as a rational function:\n\n( X(z) = \\frac{P(z)}{Q(z)} )\n\nand if x[0] is finite, then the degree of the denominator must be greater than or equal to the degree of the numerator so that the limit as z \\to \\infty remains finite.\n\nInterpolation (analysis using impulse representation)\n\nAny discrete-time sequence can be represented as a sum of scaled and shifted impulses:\n\n( x[n] = \\sum_{k=-\\infty}^{\\infty} x[k] \\delta[n - k] )\n\nTaking Z-transform:\n\n( Z\\{ \\delta[n - k] \\} = z^{-k} )\n\nHence:\n\n( X(z) = \\sum_{k=-\\infty}^{\\infty} x[k] z^{-k} )\n\nFor specific values:\n\nIf k = 0:\n\n( \\delta[n] \\longleftrightarrow 1 )\n\nIf k = 1:\n\n( \\delta[n - 1] \\longleftrightarrow z^{-1} )\n\nThus, each sample x[k] contributes a term x[k] z^{-k} in X(z).\n\nDecimation (sampling every k-th value)\n\nIf we define a new sequence by retaining every k-th sample:\n\n( w[n] = x[k n] )\n\nThen its Z-transform is given by:\n\n( W(z) = \\sum_{n=-\\infty}^{\\infty} x[k n] z^{-n} )\n\nThis can be related to X(z) through substitution techniques and properties of powers of z.\n\nIn particular, when k = 2 (downsampling by 2), the transform relates to X(z^2) with appropriate scaling and consideration of aliasing effects.\n\nThus, decimation modifies the argument of the Z-transform and changes the spectral characteristics accordingly.",
+  "metadata": {
+    "page_no": "21",
+    "type": "notes",
+    "subject": "Signal System",
+    "title": "Z-Transform",
+    "section": "Initial Value Theorem and Sampling Operations",
+    "all_explained_topics": [
+      "Condition on polynomial degrees",
+      "Impulse decomposition of sequence",
+      "Z-transform of shifted impulse",
+      "Interpolation representation",
+      "Decimation definition",
+      "Relation between W(z) and X(z^k)",
+      "Effect of downsampling"
+    ]
+  }
+}
+
+
+
+
+  ]
+}

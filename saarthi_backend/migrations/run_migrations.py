@@ -38,12 +38,15 @@ def _split_statements(sql: str) -> list[str]:
     """Split SQL into single statements (asyncpg allows only one per execute)."""
     statements = []
     current: list[str] = []
+    in_dollar = False  # inside a $$ ... $$ block (DO / function bodies)
     for line in sql.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("--"):
             continue
         current.append(line)
-        if stripped.endswith(";"):
+        if line.count("$$") % 2:
+            in_dollar = not in_dollar
+        if stripped.endswith(";") and not in_dollar:
             stmt = "\n".join(current).strip()
             if stmt:
                 statements.append(stmt)
@@ -72,6 +75,7 @@ async def run():
     engine = create_async_engine(
         settings.database_url,
         echo=False,
+        connect_args={"statement_cache_size": 0},  # Neon pooler (PgBouncer) compat
     )
     sql_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
     # 001 is run first to ensure table exists; we still record it

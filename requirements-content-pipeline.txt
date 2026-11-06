@@ -1,0 +1,66 @@
+# Optional extras for the Content Management / Data Ingestion pipeline
+# (scripts/ingest_videos.py, scripts/ingest_notes.py).
+#
+# Deliberately NOT part of saarthi_backend/requirements.txt: the FastAPI
+# backend and the live orchestrator/agents never import these packages —
+# only the standalone ingestion scripts do, and only when you actually run
+# local speech-to-text or OCR (the VTT/SRT-sidecar and PDF-text-layer paths
+# work without any of this installed).
+#
+# Install with:
+#   pip install -r requirements-content-pipeline.txt
+#
+# faster-whisper also needs no extra system package (it bundles its own
+# CTranslate2 runtime). pytesseract instead needs the Tesseract OCR *binary*
+# installed separately (it is not a pip package):
+#   - Windows: winget install --id UB-Mannheim.TesseractOCR -e
+#     (or https://github.com/UB-Mannheim/tesseract/wiki for a manual installer).
+#     You do NOT need to add it to PATH yourself: scripts/ingest_notes.py
+#     auto-detects the default install locations and configures
+#     pytesseract.pytesseract.tesseract_cmd automatically. For a custom
+#     install path, set the TESSERACT_CMD environment variable instead.
+#   - macOS: brew install tesseract
+#   - Debian/Ubuntu: apt-get install tesseract-ocr
+#
+# Local speech-to-text (LocalWhisperProvider) also needs ffmpeg for audio
+# extraction from video — this is a system binary, not pip-installable:
+#   - Windows: winget install --id Gyan.FFmpeg.Essentials -e
+#     (or https://www.gyan.dev/ffmpeg/builds/ for a manual installer).
+#     You do NOT need to add it to PATH yourself: scripts/ingest_videos.py
+#     auto-detects a winget-installed build automatically. For a custom
+#     install path, set the FFMPEG_CMD environment variable instead.
+#   - macOS: brew install ffmpeg
+#   - Debian/Ubuntu: apt-get install ffmpeg
+#
+# faster-whisper model size defaults to "base" (speed/accuracy balance on a
+# normal laptop CPU); override per-run with --whisper-model, or set the
+# SAARTHI_WHISPER_MODEL environment variable as a project-wide default.
+#
+# Optional handwriting-specialized OCR fallback for scripts/ingest_notes.py:
+# set SAARTHI_HANDWRITING_OCR=trocr|paddleocr to let a low-confidence page
+# also try a second engine. Neither is listed as a dependency below — both
+# are opt-in, and ingest_notes.py logs a warning and keeps the Tesseract-only
+# result if the chosen one isn't installed (the fallback is never required).
+#
+#   trocr: https://huggingface.co/microsoft/trocr-base-handwritten
+#     (override with SAARTHI_TROCR_MODEL). Needs `transformers` and `torch`,
+#     which this repo already installs for docling
+#     (saarthi_backend/requirements.txt) — usually nothing new to install.
+#
+#   paddleocr: general-purpose detection+recognition OCR, NOT a dedicated
+#     handwriting model (see the comment above
+#     scripts.ingest_notes._get_paddleocr_instance for what was actually
+#     measured on handwritten notes). Needs `paddleocr` and `paddlepaddle`,
+#     which are a genuinely heavy install (paddleocr depends on paddlex,
+#     which pulls in modelscope, aistudio-sdk, pandas, and more — expect
+#     ~1-2GB and several minutes). Install separately, deliberately not
+#     bundled in this file:
+#       pip install "paddlepaddle>=3.1" "paddleocr>=3.0"
+#     First use downloads detection+recognition models (~tens of MB,
+#     cached under ~/.paddlex/official_models/) — never during unit tests,
+#     only when SAARTHI_HANDWRITING_OCR=paddleocr actually runs.
+#     See docs/content-management.md for configuration (model/device/
+#     mkldnn env vars) and a known CPU-inference crash workaround.
+
+faster-whisper>=1.0.0
+pytesseract>=0.3.10

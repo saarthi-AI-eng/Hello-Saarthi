@@ -21,6 +21,22 @@ EMBEDDING_MODEL = "text-embedding-3-large"
 _KB_CHECK_CACHE: dict[str, float] = {}
 _KB_CHECK_TTL = 60.0  # seconds
 
+# --- Unified knowledge base (content management pipeline) -----------------
+# Additive, opt-in retrieval path fed by scripts/build_knowledge_base.py.
+# Disabled by default (legacy per-agent knowledge_base/<expert>/vector_store
+# indexes above are unaffected) — set SAARTHI_USE_UNIFIED_KB=true to enable.
+# Only experts with a canonical ContentRecord.content_type mapping below are
+# ever routed to it; any other expert (e.g. books_agent, which this pipeline
+# does not ingest content for) always uses its legacy per-agent index.
+UNIFIED_KB_ENV_VAR = "SAARTHI_USE_UNIFIED_KB"
+UNIFIED_KB_PATH = Path("knowledge_base") / "unified" / "vector_store"
+UNIFIED_KB_MANIFEST_PATH = Path("knowledge_base") / "unified" / "manifest.json"
+
+_UNIFIED_CONTENT_TYPE_MAP: dict[str, set] = {
+    "notes_agent": {"handwritten_note", "pdf_note"},
+    "video_agent": {"video_transcript"},
+}
+
 def load_pdf_with_docling(file_path: str) -> List[Document]:
     """
     Loads a PDF using Docling, which handles OCR and layout analysis.
@@ -52,11 +68,59 @@ def get_index_path(expert_name: str) -> Path:
     """Returns the path to the local vector store index."""
     return get_kb_path(expert_name) / "vector_store"
 
+def _unified_kb_enabled() -> bool:
+    return os.environ.get(UNIFIED_KB_ENV_VAR, "").strip().lower() in ("1", "true", "yes")
+
+
+def _unified_kb_embedding_model() -> str:
+    """Read the embedding model the unified index was actually built with, so query-time
+    embedding always matches — falls back to EMBEDDING_MODEL if no manifest is found."""
+    if UNIFIED_KB_MANIFEST_PATH.exists():
+        try:
+            manifest = json.loads(UNIFIED_KB_MANIFEST_PATH.read_text(encoding="utf-8"))
+            model = manifest.get("embedding_model")
+            if model:
+                return model
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Could not read unified KB manifest, defaulting embedding model: {e}")
+    return EMBEDDING_MODEL
+
+
+def get_unified_retriever(expert_name: str) -> Optional[VectorStoreRetriever]:
+    """Returns a retriever over the unified KB, scoped to this expert's content types.
+    Returns None if this expert has no unified content mapping or the index doesn't exist."""
+    allowed_types = _UNIFIED_CONTENT_TYPE_MAP.get(expert_name)
+    if not allowed_types or not UNIFIED_KB_PATH.exists():
+        return None
+
+    embeddings = OpenAIEmbeddings(model=_unified_kb_embedding_model())
+    try:
+        vector_store = FAISS.load_local(str(UNIFIED_KB_PATH), embeddings, allow_dangerous_deserialization=True)
+    except Exception as e:
+        logger.error(f"Error loading unified knowledge base: {e}")
+        return None
+
+    def _content_type_filter(metadata: dict) -> bool:
+        return metadata.get("content_type") in allowed_types
+
+    return vector_store.as_retriever(search_kwargs={"k": 5, "filter": _content_type_filter})
+
+
 def get_retriever(expert_name: str) -> Optional[VectorStoreRetriever]:
     """
     Loads the FAISS index and returns a retriever.
     Returns None if index doesn't exist.
+
+    When SAARTHI_USE_UNIFIED_KB is enabled and this expert has content in the
+    unified KB, that is preferred; otherwise falls back to the legacy
+    per-agent index below (unchanged default behavior).
     """
+    if _unified_kb_enabled():
+        unified_retriever = get_unified_retriever(expert_name)
+        if unified_retriever is not None:
+            return unified_retriever
+        logger.info(f"Unified KB enabled but unavailable for {expert_name}; falling back to legacy per-agent KB.")
+
     index_path = get_index_path(expert_name)
     if not index_path.exists():
         return None

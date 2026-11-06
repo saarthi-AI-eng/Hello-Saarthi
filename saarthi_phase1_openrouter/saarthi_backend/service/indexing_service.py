@@ -1,0 +1,340 @@
+"""Background PDF indexing service.
+
+When a teacher uploads a PDF material, this service:
+1. Extracts text from the PDF
+2. Chunks it into ~500-token pieces
+3. Embeds and stores in a per-course FAISS index
+4. Tags every chunk with the material title so _fetch_faiss_context can find it
+
+The indexing runs in a background thread so it never blocks the HTTP response.
+"""
+
+import re
+import threading
+from pathlib import Path
+from typing import Optional
+
+from saarthi_backend.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+_KB_ROOT = Path("knowledge_base") / "courses"
+_CHUNK_SIZE = 500       # characters per chunk
+_CHUNK_OVERLAP = 80
+
+
+def _extract_text_from_pdf(path: Path) -> str:
+    """Extract plain text from a PDF file using pypdf (no OCR needed for text PDFs)."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(str(path))
+        pages = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            pages.append(text.strip())
+        return "\n\n".join(p for p in pages if p)
+    except Exception as e:
+        logger.warning("PDF text extraction failed for %s: %s", path, e)
+        return ""
+
+
+def _extract_text_from_txt(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        logger.warning("Text extraction failed for %s: %s", path, e)
+        return ""
+
+
+def _chunk_text(text: str, chunk_size: int = _CHUNK_SIZE, overlap: int = _CHUNK_OVERLAP) -> list[str]:
+    """Split text into overlapping chunks."""
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        start += chunk_size - overlap
+    return chunks
+
+
+def _index_document_sync(
+    file_path: Path,
+    material_title: str,
+    course_id: int,
+    material_id: int,
+) -> bool:
+    """Blocking: extract, chunk, embed, and upsert into course FAISS index."""
+    try:
+        from langchain_community.vectorstores import FAISS
+        from src.utils.llm import embeddings as make_embeddings
+        from langchain_core.documents import Document
+    except ImportError:
+        logger.error("LangChain / OpenAI packages not available for indexing")
+        return False
+
+    # Extract text based on file type
+    ext = file_path.suffix.lower()
+    if ext == ".pdf":
+        text = _extract_text_from_pdf(file_path)
+    elif ext in (".txt",):
+        text = _extract_text_from_txt(file_path)
+    else:
+        # For .doc, .docx, .ppt, .pptx — skip for now, no binary parser available without heavy deps
+        logger.info("Skipping indexing for unsupported type %s (material: %s)", ext, material_title)
+        return False
+
+    if not text or len(text.strip()) < 50:
+        logger.info("No extractable text in %s, skipping indexing", file_path.name)
+        return False
+
+    chunks = _chunk_text(text)
+    if not chunks:
+        return False
+
+    # Build LangChain Documents with metadata so _fetch_faiss_context can filter by source
+    source_tag = material_title.lower().replace(" ", "_")
+    docs = [
+        Document(
+            page_content=chunk,
+            metadata={
+                "source": source_tag,
+                "material_title": material_title,
+                "course_id": course_id,
+                "material_id": material_id,
+                "chunk_index": i,
+            },
+        )
+        for i, chunk in enumerate(chunks)
+    ]
+
+    try:
+        embeddings = make_embeddings()
+        index_path = _KB_ROOT / str(course_id) / "vector_store"
+        index_path.mkdir(parents=True, exist_ok=True)
+
+        if (index_path / "index.faiss").exists():
+            # Merge into existing course index
+            vs = FAISS.load_local(
+                str(index_path), embeddings, allow_dangerous_deserialization=True
+            )
+            vs.add_documents(docs)
+        else:
+            # Create fresh index for this course
+            vs = FAISS.from_documents(docs, embeddings)
+
+        vs.save_local(str(index_path))
+        logger.info(
+            "Indexed %d chunks for material '%s' (course %d) into %s",
+            len(docs), material_title, course_id, index_path,
+        )
+        return True
+
+    except Exception as e:
+        logger.error("FAISS indexing failed for material '%s': %s", material_title, e)
+        return False
+
+
+def index_material_background(
+    file_path: Path,
+    material_title: str,
+    course_id: int,
+    material_id: int,
+) -> None:
+    """Fire-and-forget: index a material in a background thread."""
+    def _run():
+        logger.info("Background indexing started for '%s' (course %d)", material_title, course_id)
+        ok = _index_document_sync(file_path, material_title, course_id, material_id)
+        if ok:
+            logger.info("Background indexing complete for '%s'", material_title)
+        else:
+            logger.warning("Background indexing skipped/failed for '%s'", material_title)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+_VIDEO_KB_ROOT = Path("knowledge_base") / "videos"
+
+
+def _extract_youtube_id(url: str) -> str | None:
+    """Pull the 11-char video ID from any YouTube URL or embed URL."""
+    import re
+    patterns = [
+        r"(?:v=|/v/|youtu\.be/|/embed/|/shorts/)([A-Za-z0-9_-]{11})",
+    ]
+    for p in patterns:
+        m = re.search(p, url or "")
+        if m:
+            return m.group(1)
+    return None
+
+
+def fetch_youtube_transcript(url: str) -> str:
+    """
+    Fetch the auto-generated or manual transcript from YouTube.
+    Returns plain text, or empty string if unavailable.
+    """
+    video_id = _extract_youtube_id(url)
+    if not video_id:
+        return ""
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        api = YouTubeTranscriptApi()
+        transcript = api.fetch(video_id)
+        return " ".join(s.text for s in transcript if s.text)
+    except Exception as e:
+        logger.warning("YouTube transcript fetch failed for %s: %s", video_id, e)
+        return ""
+
+
+def auto_index_youtube_video(video_id: int, video_title: str, url: str, embed_url: str | None = None) -> None:
+    """
+    Fire-and-forget: if the video is a YouTube video and has no index yet,
+    fetch its transcript and index it automatically.
+    """
+    index_path = _VIDEO_KB_ROOT / str(video_id) / "vector_store"
+    if (index_path / "index.faiss").exists():
+        return  # already indexed
+
+    yt_url = embed_url or url
+    def _run():
+        text = fetch_youtube_transcript(yt_url)
+        if text:
+            logger.info("Auto-fetched YouTube transcript for video %d (%d chars)", video_id, len(text))
+            _index_video_transcript_sync(video_id, video_title, text)
+        else:
+            logger.info("No YouTube transcript available for video %d", video_id)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+def _index_video_transcript_sync(video_id: int, video_title: str, transcript_text: str) -> bool:
+    """Blocking: chunk, embed, and store a video transcript into a per-video FAISS index."""
+    try:
+        from langchain_community.vectorstores import FAISS
+        from src.utils.llm import embeddings as make_embeddings
+        from langchain_core.documents import Document
+    except ImportError:
+        logger.error("LangChain / OpenAI packages not available for indexing")
+        return False
+
+    if not transcript_text or len(transcript_text.strip()) < 50:
+        logger.info("Transcript too short to index for video %d", video_id)
+        return False
+
+    chunks = _chunk_text(transcript_text)
+    if not chunks:
+        return False
+
+    source_tag = video_title.lower().replace(" ", "_")
+    docs = [
+        Document(
+            page_content=chunk,
+            metadata={
+                "source": source_tag,
+                "video_title": video_title,
+                "video_id": video_id,
+                "chunk_index": i,
+            },
+        )
+        for i, chunk in enumerate(chunks)
+    ]
+
+    try:
+        embeddings = make_embeddings()
+        index_path = _VIDEO_KB_ROOT / str(video_id) / "vector_store"
+        index_path.mkdir(parents=True, exist_ok=True)
+
+        vs = FAISS.from_documents(docs, embeddings)
+        vs.save_local(str(index_path))
+        logger.info("Indexed %d transcript chunks for video %d ('%s')", len(docs), video_id, video_title)
+        return True
+    except Exception as e:
+        logger.error("FAISS transcript indexing failed for video %d: %s", video_id, e)
+        return False
+
+
+def index_video_transcript_background(video_id: int, video_title: str, transcript_text: str) -> None:
+    """Fire-and-forget: index a video transcript in a background thread."""
+    def _run():
+        logger.info("Background transcript indexing started for video %d", video_id)
+        ok = _index_video_transcript_sync(video_id, video_title, transcript_text)
+        if ok:
+            logger.info("Transcript indexing complete for video %d", video_id)
+        else:
+            logger.warning("Transcript indexing skipped/failed for video %d", video_id)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+def fetch_video_transcript_context(query: str, video_id: int, video_title: str, k: int = 5) -> str:
+    """Search the per-video FAISS index for chunks relevant to the query."""
+    try:
+        from langchain_community.vectorstores import FAISS
+        from src.utils.llm import embeddings as make_embeddings
+
+        index_path = _VIDEO_KB_ROOT / str(video_id) / "vector_store"
+        if not (index_path / "index.faiss").exists():
+            return ""
+
+        embeddings = make_embeddings()
+        vs = FAISS.load_local(str(index_path), embeddings, allow_dangerous_deserialization=True)
+        docs = vs.similarity_search(f"{video_title} {query}", k=k)
+        chunks = [d.page_content.strip() for d in docs if d.page_content.strip()]
+        return "\n\n---\n\n".join(chunks[:k])
+    except Exception as e:
+        logger.warning("Video transcript context fetch failed for video %d: %s", video_id, e)
+        return ""
+
+
+def delete_video_transcript_index(video_id: int) -> None:
+    """Remove the per-video FAISS index when a video is deleted."""
+    import shutil
+    index_path = _VIDEO_KB_ROOT / str(video_id)
+    if index_path.exists():
+        shutil.rmtree(str(index_path), ignore_errors=True)
+        logger.info("Deleted transcript index for video %d", video_id)
+
+
+def delete_material_from_index(
+    material_title: str,
+    course_id: int,
+    material_id: int,
+) -> None:
+    """Remove a material's chunks from the course FAISS index on deletion."""
+    def _run():
+        try:
+            from langchain_community.vectorstores import FAISS
+            from src.utils.llm import embeddings as make_embeddings
+
+            index_path = _KB_ROOT / str(course_id) / "vector_store"
+            if not (index_path / "index.faiss").exists():
+                return
+
+            embeddings = make_embeddings()
+            vs = FAISS.load_local(
+                str(index_path), embeddings, allow_dangerous_deserialization=True
+            )
+
+            # Find and remove chunks belonging to this material
+            ids_to_remove = [
+                doc_id for doc_id, doc in vs.docstore._dict.items()
+                if doc.metadata.get("material_id") == material_id
+            ]
+            if ids_to_remove:
+                vs.delete(ids_to_remove)
+                vs.save_local(str(index_path))
+                logger.info(
+                    "Removed %d chunks for material_id=%d from course %d index",
+                    len(ids_to_remove), material_id, course_id,
+                )
+        except Exception as e:
+            logger.warning("Failed to remove material from index: %s", e)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()

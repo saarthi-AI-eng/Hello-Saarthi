@@ -1,9 +1,7 @@
-"""Chat feature service: conversations, messages, study plan, socratic mode, concept graph, exam prediction."""
-
+"""Chat feature service: conversations, messages, study plan, socratic mode,
+concept graph, exam prediction."""
 import json
 import logging
-import os
-import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +18,7 @@ from saarthi_backend.schema.chat_schemas import (
     Flashcard,
     FlashcardDeckRequest,
     FlashcardDeckResponse,
+    FlashcardListResponse,
     FlashcardReviewRequest,
     FlashcardReviewResponse,
     SocraticChallengeRequest,
@@ -31,6 +30,18 @@ from saarthi_backend.schema.chat_schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+from src.utils.llm import async_openai, chat_model_name
+
+
+def _kb_excerpts(query: str, course_id: int | None = None) -> str:
+    """Ground study tools in retrieve(). Empty string if nothing indexed."""
+    try:
+        from src.tools.retrieve import retrieve, chunks_as_prompt
+        chunks = retrieve(query, course_id=course_id, k=5)
+        return chunks_as_prompt(chunks)
+    except Exception:
+        return ""
 
 
 async def create_conversation(db: AsyncSession, user_id: int, title: str = "New Chat") -> Conversation:
@@ -65,69 +76,16 @@ async def delete_conversation(db: AsyncSession, conversation_id: int, user_id: i
     return await ConversationDAO.delete(db, conversation_id, user_id)
 
 
-_KB_AGENTS = ["books_agent", "notes_agent", "video_agent"]
-
-
 def _fetch_faiss_context(query: str, material_title: str, course_id: int | None = None) -> str:
     """Search FAISS indexes for chunks relevant to the query + material title.
-
     Priority:
     1. Per-course index (knowledge_base/courses/<course_id>/vector_store) — exact material match
     2. Global agent indexes — fallback to HMA corpus
     """
     try:
-        from pathlib import Path
-        from langchain_community.vectorstores import FAISS
-        from langchain_openai import OpenAIEmbeddings
-
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-        kb_root = Path("knowledge_base")
-        all_chunks: list[str] = []
-        title_lower = material_title.lower()
-
-        # ── 1. Per-course index (highest priority) ────────────────────────────
-        if course_id:
-            course_index = kb_root / "courses" / str(course_id) / "vector_store"
-            if course_index.exists():
-                try:
-                    vs = FAISS.load_local(
-                        str(course_index), embeddings, allow_dangerous_deserialization=True
-                    )
-                    docs = vs.similarity_search(f"{material_title} {query}", k=5)
-                    for d in docs:
-                        src = d.metadata.get("source", "").lower()
-                        # Normalise both to underscores for comparison
-                        src_norm = src.replace(" ", "_")
-                        title_norm = title_lower.replace(" ", "_")
-                        if not src or title_norm in src_norm:
-                            all_chunks.append(d.page_content.strip())
-                    # If we found course-specific chunks, return immediately — no need to fall back
-                    if all_chunks:
-                        return "\n\n---\n\n".join(all_chunks[:6])
-                except Exception:
-                    pass
-
-        # ── 2. Global agent indexes (only if no course_id — general chat only) ──
-        # When a student is viewing a specific document, never fall back to the
-        # HMA corpus — it causes confident wrong answers from unrelated content.
-        if not course_id:
-            for agent in _KB_AGENTS:
-                index_path = kb_root / agent / "vector_store"
-                if not index_path.exists():
-                    continue
-                try:
-                    vs = FAISS.load_local(
-                        str(index_path), embeddings, allow_dangerous_deserialization=True
-                    )
-                    docs = vs.similarity_search(f"{material_title} {query}", k=3)
-                    for d in docs:
-                        src = d.metadata.get("source", "")
-                        if title_lower in src.lower() or not src:
-                            all_chunks.append(d.page_content.strip())
-                except Exception:
-                    continue
-
-        return "\n\n---\n\n".join(all_chunks[:5])
+        from src.tools.retrieve import retrieve, chunks_as_prompt
+        chunks = retrieve(query, course_id=course_id, material_title=material_title)
+        return chunks_as_prompt(chunks)
     except Exception:
         return ""
 
@@ -138,7 +96,6 @@ def _apply_document_context(
     course_id: int | None = None,
 ) -> tuple[str, bool]:
     """Enrich prompt with real FAISS chunks from the viewed document.
-
     Returns (enriched_prompt, is_grounded) where is_grounded=True means
     the prompt contains actual indexed document excerpts and should be
     answered with run_document_chat (bypassing LangGraph corpus agents).
@@ -149,20 +106,13 @@ def _apply_document_context(
     kb_context = _fetch_faiss_context(message, title, course_id=course_id)
     if kb_context:
         prompt = (
-            f'The student is viewing the course document titled "{title}".\n\n'
-            f"Here are relevant excerpts extracted directly from that document:\n{kb_context}\n\n"
-            f"Answer the student's question using ONLY the excerpts above. "
-            f"Do not use outside knowledge unless the excerpts are insufficient, "
-            f"and if so, say so explicitly.\n\nQuestion: {message}"
+            f'The student is viewing the course document "{title}".\n\n'
+            f"Course excerpts:\n{kb_context}\n\n"
+            f"<student_question>\n{message}\n</student_question>"
         )
         return prompt, True
-    # No indexed content — fall through to general knowledge via LangGraph
-    fallback = (
-        f'The student is viewing a document titled "{title}" but its content '
-        f"has not been indexed yet. Answer their question using your general knowledge, "
-        f"and note that you don't have access to the specific document content.\n\nQuestion: {message}"
-    )
-    return fallback, False
+    # Grounding rule (DEC-1): nothing indexed for this document -> no answer from general knowledge.
+    return f'"{title}" has no indexed content yet. Question: {message}', False
 
 
 def _apply_video_context(
@@ -171,28 +121,21 @@ def _apply_video_context(
     video_title: str | None,
 ) -> tuple[str, bool]:
     """Enrich prompt with FAISS chunks from the video's indexed transcript.
-
     Returns (enriched_prompt, is_grounded). Same pattern as _apply_document_context
     but reads from knowledge_base/videos/<video_id>/ instead of courses.
     """
     if not video_id or not video_title:
         return message, False
-    from saarthi_backend.service.indexing_service import fetch_video_transcript_context
-    kb_context = fetch_video_transcript_context(message, video_id, video_title)
+    from src.tools.retrieve import retrieve, chunks_as_prompt
+    kb_context = chunks_as_prompt(retrieve(message, video_id=video_id, material_title=video_title))
     if kb_context:
         prompt = (
-            f'The student is watching the video lecture titled "{video_title}".\n\n'
-            f"Here are relevant excerpts from that video's transcript:\n{kb_context}\n\n"
-            f"Answer the student's question using ONLY the transcript excerpts above. "
-            f"Do not draw on outside knowledge unless the excerpts are insufficient.\n\nQuestion: {message}"
+            f'The student is watching the video lecture "{video_title}".\n\n'
+            f"Transcript excerpts:\n{kb_context}\n\n"
+            f"<student_question>\n{message}\n</student_question>"
         )
         return prompt, True
-    fallback = (
-        f'The student is watching the video lecture "{video_title}". '
-        f"No transcript has been indexed for this video yet. "
-        f"Answer their question using your general course knowledge.\n\nQuestion: {message}"
-    )
-    return fallback, False
+    return f'"{video_title}" has no indexed transcript yet. Question: {message}', False
 
 
 async def send_message(
@@ -232,24 +175,91 @@ async def stateless_message(
     context_video_id: int | None = None,
     context_video_title: str | None = None,
 ) -> str:
+    import time as _time
+    from fastapi.concurrency import run_in_threadpool
+    from saarthi_backend.ai.adapter import run_grounded_answer
+    from src.cache.semantic_cache import get_cache
+    from src.orchestrator.policy import plan_turn
+    from src.prompts import tutor
+    from src.safety.guard import check_injection, scrub_pii
+    from src.telemetry.traces import summarize_usage, write_trace
+    from src.tools.citations import is_cited
+    from src.tools.grounding import ground
+    from src.utils import budget
+    from src.utils.llm import chat_model_name, reset_tier, set_tier
+
+    question, pii_scrubbed = scrub_pii(message)
+    injection = check_injection(question)
     history = [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in conversation_history]
 
-    # Video transcript grounding takes priority over document grounding
-    if context_video_id:
-        prompt_for_ai, is_grounded = _apply_video_context(message, context_video_id, context_video_title)
-    else:
-        prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
+    # Widget / document viewer: no mode toggle there, so no Socratic hints (answer_mode=direct).
+    policy = await run_in_threadpool(lambda: plan_turn(
+        question, history,
+        course_id=course_id, material_title=context_material_title, video_id=context_video_id,
+        mode="mind" if mind_mode else "chat", answer_mode="direct",
+    ))
+    started = _time.perf_counter()
+    tier_token = set_tier(policy.tier or 1)
+    usage_token = budget.request_usage.set([])
+    hit = policy.cache_hit
+    reply_mode, chunks = "grounded", []
+    try:
+        if hit is not None:
+            answer = hit.answer
+        elif course_id or context_material_title or context_video_id:
+            # Follow-ups ("explain more") are grounded on the previous question they refer to.
+            prev = next((m.get("content", "") for m in reversed(history) if m.get("role") == "user"), "")
+            retrieval_query = f"{prev} {question}".strip() if policy.qclass.kind == "followup" else question
+            g = await run_in_threadpool(lambda: ground(
+                retrieval_query, course_id=course_id, material_title=context_material_title,
+                video_id=context_video_id, n=policy.top_n,
+            ))
+            chunks = g.chunks
+            if policy.qclass.kind == "smalltalk":
+                reply_mode = "general"
+                answer = await run_chat(question, history + [{"role": "user", "content": question}])
+            elif not g.covered:
+                reply_mode = "not_covered"
+                answer = tutor.not_covered(context_material_title)
+            else:
+                answer = await run_grounded_answer(question, g.chunks, history)
+        else:
+            history.append({"role": "user", "content": question})
+            answer = await run_chat(question, history, mind_mode=mind_mode)
+            reply_mode = "graph"
+        cited = bool(chunks) and is_cited(answer, chunks)
+        if (hit is None and policy.cache_scope and reply_mode == "grounded" and cited and not injection):
+            await run_in_threadpool(
+                lambda: get_cache().store(
+                    question, policy.cache_scope, answer,
+                    chunk_ids=[c.id for c in chunks],
+                    answer_model=chat_model_name(tier=policy.tier), tier=policy.tier, embedding=policy.embedding,
+                )
+            )
+    finally:
+        usage = budget.request_usage.get() or []
+        reset_tier(tier_token)
+        budget.request_usage.reset(usage_token)
 
-    if is_grounded:
-        if context_video_id:
-            return await run_video_chat(prompt_for_ai, history)
-        return await run_document_chat(prompt_for_ai, history)
-    history.append({"role": "user", "content": prompt_for_ai})
-    return await run_chat(prompt_for_ai, history, mind_mode=mind_mode)
+    write_trace({
+        "path": "message",
+        "scope": {"course_id": course_id, "material": context_material_title, "video_id": context_video_id},
+        "query": question,
+        **policy.trace(),
+        "tier": 0 if hit else policy.tier,
+        "model": None if hit else chat_model_name(tier=policy.tier),
+        "cache": {"hit": hit is not None, "similarity": getattr(hit, "similarity", None)},
+        "reply_mode": reply_mode,
+        "cite_ids": [c.id for c in chunks],
+        "safety": {"pii_scrubbed": pii_scrubbed, "injection_suspected": injection},
+        "tokens": summarize_usage(usage),
+        "latency_ms": round((_time.perf_counter() - started) * 1000),
+        "answer_chars": len(answer or ""),
+    })
+    return answer
 
 
 # ─── Study Plan Generator ─────────────────────────────────────────────────────
-
 _STUDY_PLAN_SYSTEM = """You are an expert academic advisor for engineering students.
 Generate a structured 7-day weekly study plan in valid JSON.
 
@@ -280,10 +290,8 @@ async def generate_study_plan(
 ) -> StudyPlanResponse:
     """Call GPT-4.1 to generate a personalized weekly study plan."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+        client = async_openai()
 
-        # Build context summary
         courses_text = "\n".join(
             f"- {c.title} ({c.code}): {c.progressPercent}% complete"
             for c in body.courses
@@ -301,6 +309,7 @@ async def generate_study_plan(
         ) or "No recent quiz data."
 
         focus_text = f"\nStudent wants to focus on: {body.focusArea}" if body.focusArea else ""
+        topic_q = body.focusArea or (body.courses[0].title if body.courses else "engineering")
 
         user_prompt = f"""Student profile:
 Available hours per day: {body.hoursPerDay}h{focus_text}
@@ -314,10 +323,13 @@ Upcoming deadlines:
 Recent quiz performance:
 {scores_text}
 
+Retrieved course material:
+{_kb_excerpts(topic_q)[:3000]}
+
 Generate a 7-day study plan."""
 
         response = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[
                 {"role": "system", "content": _STUDY_PLAN_SYSTEM},
                 {"role": "user", "content": user_prompt},
@@ -345,7 +357,6 @@ Generate a 7-day study plan."""
             priorityTopics=data.get("priorityTopics", []),
             generatedAt=datetime.now(timezone.utc).isoformat(),
         )
-
     except Exception as e:
         logger.exception("Study plan generation failed: %s", e)
         return StudyPlanResponse(
@@ -357,10 +368,12 @@ Generate a 7-day study plan."""
 
 
 # ─── Socratic Challenge Mode ───────────────────────────────────────────────────
+# NOTE: previously this string had an unrelated grounding sentence spliced
+# into the middle of "Your job is NOT to explain — it is to challenge...",
+# breaking the sentence. Reordered so the instruction actually reads correctly.
+_SOCRATIC_SYSTEM = """You are a Socratic tutor for engineering students. Your job is NOT to explain — it is to challenge the student's claim using the Socratic method.
 
-_SOCRATIC_SYSTEM = """You are a Socratic tutor for engineering students. Your job is NOT to explain —
-it is to challenge the student's claim using the Socratic method.
-
+If course excerpts are provided, ground every challenge in those facts.
 - Ask sharp probing questions that expose gaps in reasoning
 - If the student is wrong, don't say so directly — lead them to discover it
 - If the student is correct, push them deeper: "Why does that hold? What breaks this assumption?"
@@ -380,24 +393,21 @@ Return ONLY valid JSON:
 async def socratic_challenge(body: SocraticChallengeRequest) -> SocraticChallengeResponse:
     """Generate a Socratic counter-challenge to a student's claim."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-
+        client = async_openai()
         difficulty_map = {
             "gentle": "Be encouraging and ask one soft question.",
             "moderate": "Challenge them firmly but fairly.",
             "rigorous": "Be relentless. Find every flaw. Don't accept vague answers.",
         }
-
         user_prompt = (
             f"Topic: {body.topic}\n"
             + (f"Course: {body.courseTitle}\n" if body.courseTitle else "")
             + f"Student's claim: \"{body.claim}\"\n"
-            f"Difficulty level: {difficulty_map[body.difficulty]}"
+            f"Difficulty level: {difficulty_map[body.difficulty]}\n\n"
+            f"Course excerpts (use these facts):\n{_kb_excerpts(body.topic)}"
         )
-
         response = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[
                 {"role": "system", "content": _SOCRATIC_SYSTEM},
                 {"role": "user", "content": user_prompt},
@@ -406,7 +416,6 @@ async def socratic_challenge(body: SocraticChallengeRequest) -> SocraticChalleng
             max_tokens=600,
             response_format={"type": "json_object"},
         )
-
         data = json.loads(response.choices[0].message.content or "{}")
         return SocraticChallengeResponse(
             challenge=data.get("challenge", "Can you explain your reasoning further?"),
@@ -425,7 +434,6 @@ async def socratic_challenge(body: SocraticChallengeRequest) -> SocraticChalleng
 
 
 # ─── Concept Graph ─────────────────────────────────────────────────────────────
-
 _CONCEPT_GRAPH_SYSTEM = """You are an expert in engineering curriculum design.
 Given a course title and quiz performance data, generate a concept dependency graph.
 
@@ -456,16 +464,14 @@ async def generate_concept_graph(
 ) -> ConceptGraphResponse:
     """Build a concept dependency graph with mastery levels from quiz history."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-
+        client = async_openai()
         scores_text = "\n".join(
             f"- {q.quizTitle}: {q.score:.0f}%" + (f" (weak: {', '.join(q.weakTopics)})" if q.weakTopics else "")
             for q in quiz_scores
         ) or "No quiz data available."
 
         response = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[
                 {"role": "system", "content": _CONCEPT_GRAPH_SYSTEM},
                 {"role": "user", "content": f"Course: {course_title}\n\nQuiz performance:\n{scores_text}"},
@@ -474,7 +480,6 @@ async def generate_concept_graph(
             max_tokens=2000,
             response_format={"type": "json_object"},
         )
-
         data = json.loads(response.choices[0].message.content or "{}")
         nodes = [
             ConceptNode(
@@ -493,7 +498,6 @@ async def generate_concept_graph(
 
 
 # ─── Exam Prediction ───────────────────────────────────────────────────────────
-
 _EXAM_PRED_SYSTEM = """You are an expert at predicting exam topics for engineering courses.
 Analyze quiz performance and course content to predict the most likely exam topics.
 
@@ -521,25 +525,23 @@ Rules:
 async def predict_exam_topics(body: ExamPredictionRequest) -> ExamPredictionResponse:
     """Predict likely exam topics and student readiness for each."""
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
-
+        client = async_openai()
         scores_text = "\n".join(
             f"- {q.quizTitle}: {q.score:.0f}%" + (f" (weak: {', '.join(q.weakTopics)})" if q.weakTopics else "")
             for q in body.recentQuizScores
         ) or "No quiz data."
-
         notes_text = ", ".join(body.notesTopics) if body.notesTopics else "No notes data."
 
         user_prompt = (
             f"Course: {body.courseTitle}\n"
             f"Hours until exam: {body.hoursUntilExam}\n\n"
             f"Quiz performance:\n{scores_text}\n\n"
-            f"Topics covered in notes: {notes_text}"
+            f"Topics covered in notes: {notes_text}\n\n"
+            f"Retrieved excerpts:\n{_kb_excerpts(body.courseTitle)[:4000]}"
         )
 
         response = await client.chat.completions.create(
-            model="gpt-4.1",
+            model=chat_model_name(),
             messages=[
                 {"role": "system", "content": _EXAM_PRED_SYSTEM},
                 {"role": "user", "content": user_prompt},
@@ -548,7 +550,6 @@ async def predict_exam_topics(body: ExamPredictionRequest) -> ExamPredictionResp
             max_tokens=1000,
             response_format={"type": "json_object"},
         )
-
         data = json.loads(response.choices[0].message.content or "{}")
         predictions = [
             ExamPredictionTopic(
@@ -574,7 +575,6 @@ async def predict_exam_topics(body: ExamPredictionRequest) -> ExamPredictionResp
 
 
 # ─── Flashcard Generation (Spaced Repetition) ─────────────────────────────────
-
 _FLASHCARD_SYSTEM = """You are an expert at creating Anki-style flashcards for engineering students.
 Extract the most important facts, definitions, formulas, and concepts from the provided text.
 
@@ -598,53 +598,205 @@ Rules:
 - Never duplicate semantically equivalent cards"""
 
 
-async def generate_flashcards(body: FlashcardDeckRequest) -> FlashcardDeckResponse:
-    """Extract flashcards from a note or transcript using GPT-4.1."""
-    try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+def _coerce_difficulty(value: str | None) -> str:
+    v = (value or "medium").strip().lower()
+    return v if v in ("easy", "medium", "hard") else "medium"
 
+
+def _row_to_flashcard(row) -> Flashcard:
+    nr = row.next_review_at
+    return Flashcard(
+        id=str(row.id),
+        front=row.front,
+        back=row.back,
+        topic=row.topic,
+        difficulty=_coerce_difficulty(row.difficulty),
+        nextReviewAt=nr.isoformat() if nr is not None else None,
+        interval=int(row.interval or 1),
+        easeFactor=float(row.ease_factor or 2.5),
+    )
+
+
+async def list_flashcards(
+    db: AsyncSession,
+    user_id: int,
+    topic: str | None = None,
+) -> FlashcardListResponse:
+    """All saved cards for this user. Generating a new deck APPENDs; it never replaces."""
+    from sqlalchemy import text
+
+    if topic:
+        result = await db.execute(
+            text(
+                """
+                SELECT id, topic, front, back, difficulty, interval, ease_factor, next_review_at
+                FROM saarthi_flashcards
+                WHERE user_id = :uid AND topic = :topic
+                ORDER BY created_at ASC, id ASC
+                """
+            ),
+            {"uid": user_id, "topic": topic},
+        )
+    else:
+        result = await db.execute(
+            text(
+                """
+                SELECT id, topic, front, back, difficulty, interval, ease_factor, next_review_at
+                FROM saarthi_flashcards
+                WHERE user_id = :uid
+                ORDER BY created_at ASC, id ASC
+                """
+            ),
+            {"uid": user_id},
+        )
+    cards = [_row_to_flashcard(r) for r in result]
+    topics = list(dict.fromkeys(c.topic for c in cards))
+    return FlashcardListResponse(cards=cards, topics=topics)
+
+
+async def generate_flashcards(
+    body: FlashcardDeckRequest,
+    db: AsyncSession | None = None,
+    user_id: int | None = None,
+) -> FlashcardDeckResponse:
+    """Extract flashcards and APPEND them to the user's saved library."""
+    try:
+        client = async_openai()
         user_prompt = (
             f"Topic: {body.topic}\n"
             + (f"Course: {body.courseTitle}\n" if body.courseTitle else "")
             + f"Generate up to {body.maxCards} flashcards from this text:\n\n{body.sourceText[:6000]}"
+            f"\n\nRetrieved course excerpts (prefer these):\n{_kb_excerpts(body.topic)[:4000]}"
         )
-
-        response = await client.chat.completions.create(
-            model="gpt-4.1",
-            messages=[
-                {"role": "system", "content": _FLASHCARD_SYSTEM},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.4,
-            max_tokens=3000,
-            response_format={"type": "json_object"},
-        )
-
-        data = json.loads(response.choices[0].message.content or "{}")
-        now = datetime.now(timezone.utc)
-        cards = [
-            Flashcard(
-                id=str(i + 1),
-                front=c["front"],
-                back=c["back"],
-                topic=c.get("topic", body.topic),
-                difficulty=c.get("difficulty", "medium"),
-                nextReviewAt=now.isoformat(),
-                interval=1,
-                easeFactor=2.5,
-            )
-            for i, c in enumerate(data.get("cards", [])[: body.maxCards])
+        messages = [
+            {"role": "system", "content": _FLASHCARD_SYSTEM},
+            {"role": "user", "content": user_prompt},
         ]
+        try:
+            response = await client.chat.completions.create(
+                model=chat_model_name(),
+                messages=messages,
+                temperature=0.4,
+                max_tokens=3000,
+                response_format={"type": "json_object"},
+            )
+        except Exception:
+            response = await client.chat.completions.create(
+                model=chat_model_name(),
+                messages=messages,
+                temperature=0.4,
+                max_tokens=3000,
+            )
+        raw = response.choices[0].message.content or "{}"
+        if "```" in raw:
+            raw = raw.split("```", 2)[1]
+            if raw.lstrip().lower().startswith("json"):
+                raw = raw.split("\n", 1)[-1]
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            start, end = raw.find("{"), raw.rfind("}")
+            data = json.loads(raw[start : end + 1]) if start >= 0 and end > start else {}
+        raw_cards = data.get("cards") if isinstance(data, dict) else data
+        if not isinstance(raw_cards, list):
+            raw_cards = []
+        deck_topic = (body.topic or "General").strip() or "General"
+        now = datetime.now(timezone.utc)
+        cards: list[Flashcard] = []
+        for i, c in enumerate(raw_cards[: body.maxCards]):
+            if not isinstance(c, dict) or not c.get("front") or not c.get("back"):
+                continue
+            cards.append(
+                Flashcard(
+                    id=str(i + 1),
+                    front=str(c["front"]).strip(),
+                    back=str(c["back"]).strip(),
+                    topic=deck_topic,
+                    difficulty=_coerce_difficulty(c.get("difficulty")),
+                    nextReviewAt=now.isoformat(),
+                    interval=1,
+                    easeFactor=2.5,
+                )
+            )
+
+        if db is not None and user_id is not None and cards:
+            try:
+                from sqlalchemy import text
+                persisted: list[Flashcard] = []
+                for c in cards:
+                    existing = await db.execute(
+                        text(
+                            """
+                            SELECT id, topic, front, back, difficulty, interval, ease_factor, next_review_at
+                            FROM saarthi_flashcards
+                            WHERE user_id = :uid AND front = :front
+                            LIMIT 1
+                            """
+                        ),
+                        {"uid": user_id, "front": c.front},
+                    )
+                    row = existing.first()
+                    if row:
+                        await db.execute(
+                            text(
+                                """
+                                UPDATE saarthi_flashcards
+                                SET topic = :topic
+                                WHERE id = :id AND user_id = :uid
+                                """
+                            ),
+                            {"topic": deck_topic, "id": row.id, "uid": user_id},
+                        )
+                        persisted.append(
+                            Flashcard(
+                                id=str(row.id),
+                                front=row.front,
+                                back=row.back,
+                                topic=deck_topic,
+                                difficulty=_coerce_difficulty(row.difficulty),
+                                nextReviewAt=row.next_review_at.isoformat() if row.next_review_at else None,
+                                interval=int(row.interval or 1),
+                                easeFactor=float(row.ease_factor or 2.5),
+                            )
+                        )
+                        continue
+                    inserted = await db.execute(
+                        text(
+                            """
+                            INSERT INTO saarthi_flashcards
+                                (user_id, topic, front, back, difficulty, interval, ease_factor, next_review_at)
+                            VALUES
+                                (:uid, :topic, :front, :back, :diff, 1, 2.5, now())
+                            RETURNING id, topic, front, back, difficulty, interval, ease_factor, next_review_at
+                            """
+                        ),
+                        {
+                            "uid": user_id,
+                            "topic": deck_topic,
+                            "front": c.front,
+                            "back": c.back,
+                            "diff": c.difficulty,
+                        },
+                    )
+                    new_row = inserted.first()
+                    if new_row:
+                        persisted.append(_row_to_flashcard(new_row))
+                await db.commit()
+                if persisted:
+                    cards = persisted
+            except Exception as persist_err:
+                logger.warning("flashcard persist skipped: %s", persist_err)
+
         return FlashcardDeckResponse(
-            topic=body.topic,
+            topic=deck_topic,
             cards=cards,
             generatedAt=now.isoformat(),
         )
     except Exception as e:
         logger.exception("Flashcard generation failed: %s", e)
         return FlashcardDeckResponse(
-            topic=body.topic, cards=[], generatedAt=datetime.now(timezone.utc).isoformat()
+            topic=body.topic, cards=[],
+            generatedAt=datetime.now(timezone.utc).isoformat(),
         )
 
 
@@ -664,3 +816,42 @@ def compute_sm2_review(body: FlashcardReviewRequest) -> FlashcardReviewResponse:
     ef = max(1.3, ef + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
     next_review = (datetime.now(timezone.utc) + timedelta(days=interval)).isoformat()
     return FlashcardReviewResponse(nextInterval=interval, nextEaseFactor=ef, nextReviewAt=next_review)
+
+
+async def review_flashcard(
+    body: FlashcardReviewRequest,
+    db: AsyncSession | None = None,
+    user_id: int | None = None,
+) -> FlashcardReviewResponse:
+    """SM-2 numbers AND write them back so the next session uses them."""
+    result = compute_sm2_review(body)
+    if db is None or user_id is None:
+        return result
+    try:
+        card_id = int(body.cardId)
+    except (TypeError, ValueError):
+        return result
+    try:
+        from sqlalchemy import text
+        await db.execute(
+            text(
+                """
+                UPDATE saarthi_flashcards
+                SET interval = :interval,
+                    ease_factor = :ef,
+                    next_review_at = CAST(:nr AS timestamptz)
+                WHERE id = :id AND user_id = :uid
+                """
+            ),
+            {
+                "interval": result.nextInterval,
+                "ef": result.nextEaseFactor,
+                "nr": result.nextReviewAt,
+                "id": card_id,
+                "uid": user_id,
+            },
+        )
+        await db.commit()
+    except Exception as e:
+        logger.warning("flashcard review persist skipped: %s", e)
+    return result

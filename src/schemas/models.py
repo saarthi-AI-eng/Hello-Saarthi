@@ -31,6 +31,8 @@ class Citation(BaseModel):
     source_file: str = Field(description="The name of the source file (e.g., 'meeting_notes.pdf').")
     page_number: int = Field(description="The page number where the information was found.")
     snippet: str = Field(description="A brief snippet of the text to verify the citation.")
+    start_time: Optional[float] = Field(default=None, description="Start timestamp (seconds) for video-sourced citations, if available.")
+    end_time: Optional[float] = Field(default=None, description="End timestamp (seconds) for video-sourced citations, if available.")
 
 class MindCitation(BaseModel):
     """

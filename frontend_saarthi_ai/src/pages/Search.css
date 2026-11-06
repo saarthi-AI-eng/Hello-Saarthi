@@ -1,0 +1,86 @@
+.search-page {
+    padding: 2rem;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.search-page h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+}
+
+.search-page-desc {
+    color: var(--gray-500);
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+}
+
+.search-error {
+    padding: 0.75rem 1rem;
+    background: var(--error-light);
+    color: var(--error-dark);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: var(--radius-md);
+    margin-bottom: 1rem;
+}
+
+.search-placeholder,
+.search-loading,
+.search-empty {
+    color: var(--gray-500);
+    padding: 2rem;
+}
+
+.search-results {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.search-section h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.search-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.search-list li {
+    margin-bottom: 0.5rem;
+}
+
+.search-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.2s;
+}
+
+.search-item:hover {
+    border-color: var(--gray-300);
+    background: var(--gray-50);
+}
+
+.search-item-title {
+    flex: 1;
+    font-weight: 500;
+}
+
+.search-item-sub {
+    font-size: 0.875rem;
+    color: var(--gray-600);
+}

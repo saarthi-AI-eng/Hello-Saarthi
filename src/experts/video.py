@@ -9,7 +9,5 @@ def run_video_agent(query: str, messages: list = []) -> ExpertResponse:
     return run_expert("video_agent", query, mode="planning", messages=messages)
 
 def video_agent_node(state: AgentState):
-    query = state["sub_queries"][0].query if state["sub_queries"] else state["query"]
-    mode = "planning" if state.get("planning", False) else "rag"
-    res, trace = run_expert("video_agent", query, mode=mode, messages=state.get("messages", []))
-    return {"results": {"video_agent": res, "video_agent_trace": trace}}
+    from src.experts.base import rag_agent_node
+    return rag_agent_node("video_agent", state)

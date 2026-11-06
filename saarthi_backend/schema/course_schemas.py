@@ -28,6 +28,15 @@ class CourseCreate(BaseModel):
     color: Optional[str] = None
 
 
+class CourseUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1)
+    code: Optional[str] = Field(None, min_length=1)
+    instructor: Optional[str] = Field(None, min_length=1)
+    description: Optional[str] = None
+    thumbnailEmoji: Optional[str] = None
+    color: Optional[str] = None
+
+
 # ----- Enrollment -----
 class EnrollmentResponse(BaseModel):
     id: str
@@ -54,9 +63,30 @@ class AssignmentResponse(BaseModel):
     topic: Optional[str] = None
     attachments: Optional[str] = None
     createdAt: str
+    hardDeadline: bool = False
+    status: str = "pending"  # the requesting student's own submission status
+    grade: Optional[float] = None
+    submittedAt: Optional[str] = None  # the requesting student's own work
+    attachmentUrl: Optional[str] = None
 
     class Config:
         populate_by_name = True
+
+
+class SubmissionResponse(BaseModel):
+    """One enrolled student's work on an assignment (teacher view)."""
+
+    userId: str
+    studentName: str
+    studentEmail: str
+    status: str  # pending (assigned) | submitted (turned in) | graded
+    submittedAt: Optional[str] = None
+    attachmentUrl: Optional[str] = None
+    grade: Optional[float] = None
+
+
+class GradeRequest(BaseModel):
+    grade: Optional[float] = Field(None, ge=0, description="Points earned; null removes the grade")
 
 
 class AssignmentCreate(BaseModel):
@@ -66,6 +96,7 @@ class AssignmentCreate(BaseModel):
     points: int = 100
     topic: Optional[str] = None
     attachments: Optional[str] = None
+    hardDeadline: bool = False
 
 
 class AssignmentUpdate(BaseModel):
@@ -75,6 +106,7 @@ class AssignmentUpdate(BaseModel):
     points: Optional[int] = None
     topic: Optional[str] = None
     attachments: Optional[str] = None
+    hardDeadline: Optional[bool] = None
 
 
 class AssignmentSubmitRequest(BaseModel):
@@ -132,6 +164,19 @@ class StreamItemCreate(BaseModel):
     title: Optional[str] = None
 
 
+class StreamCommentCreate(BaseModel):
+    body: str = Field(..., min_length=1, max_length=2000)
+
+
+class StreamCommentResponse(BaseModel):
+    id: str
+    streamItemId: str
+    userId: str
+    author: str
+    body: str
+    createdAt: str
+
+
 class StreamItemUpdate(BaseModel):
     description: Optional[str] = Field(None, min_length=1)
     type: Optional[str] = None
@@ -166,6 +211,19 @@ class JoinResponse(BaseModel):
     courseId: str
     courseTitle: str
     message: str
+
+
+class MyInviteItem(BaseModel):
+    """A pending course invite addressed to the signed-in student."""
+
+    id: str
+    inviteCode: str
+    courseId: str
+    courseTitle: str
+    courseCode: str
+    instructor: str
+    thumbnailEmoji: Optional[str] = None
+    expiresAt: str
 
 
 class InviteListItem(BaseModel):

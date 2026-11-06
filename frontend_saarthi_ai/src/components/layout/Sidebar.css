@@ -1,0 +1,293 @@
+/* ================================================
+   SIDEBAR STYLES
+   ================================================ */
+.sidebar {
+    width: 260px;
+    height: 100vh;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-1);
+    border-right: 1px solid var(--border);
+    transition: width 0.3s ease;
+    overflow: hidden;
+}
+
+.sidebar-collapsed {
+    width: 72px;
+}
+
+/* Brand */
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1.25rem 1rem;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    min-height: 64px;
+}
+
+.sidebar-logo {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--primary), var(--accent-dark));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    flex-shrink: 0;
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.35);
+    position: relative;
+    overflow: hidden;
+}
+
+.sidebar-logo::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(to right, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.3) 50%, rgba(255, 255, 255, 0) 100%);
+    transform: skewX(-20deg);
+    animation: shine 4s infinite;
+}
+
+@keyframes shine {
+    0% {
+        left: -100%;
+    }
+
+    20% {
+        left: 200%;
+    }
+
+    100% {
+        left: 200%;
+    }
+}
+
+.sidebar-brand-text {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, #111827, #1D3557);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-left: 0.1rem;
+    white-space: nowrap;
+}
+
+[data-theme='dark'] .sidebar-brand-text {
+    background: linear-gradient(135deg, #F3F6FC, #B9C7DE);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.sidebar-toggle {
+    position: absolute;
+    right: -12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--card-bg);
+    border: 1px solid var(--gray-200);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 10;
+    transition: all 0.2s;
+    color: var(--gray-500);
+    box-shadow: var(--shadow-sm);
+}
+
+.sidebar-toggle:hover {
+    background: var(--gray-100);
+    color: var(--foreground);
+    border-color: var(--gray-300);
+}
+
+/* Navigation */
+.sidebar-nav {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 0.75rem 0.5rem;
+    overflow-y: auto;
+}
+
+.sidebar-nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 0.875rem;
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.sidebar-link:hover {
+    background: var(--surface-2);
+    color: var(--text-primary);
+}
+
+.sidebar-link.active {
+    background: rgba(20, 184, 166, 0.2);
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.sidebar-link.active svg {
+    color: var(--accent-light);
+}
+
+.sidebar-badge {
+    margin-left: auto;
+    padding: 0.125rem 0.5rem;
+    background: linear-gradient(135deg, var(--primary), var(--accent-dark));
+    color: white;
+    font-size: 0.625rem;
+    font-weight: 700;
+    border-radius: var(--radius-full);
+    letter-spacing: 0.05em;
+}
+
+/* Study Card */
+.sidebar-study-card {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem;
+    margin: 0.5rem 0;
+    background: linear-gradient(135deg, #1F4E61, #1A3E52);
+    border-radius: var(--radius-md);
+}
+
+.sidebar-study-icon {
+    color: #B59A63;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sidebar-study-title {
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: #F3F7FF;
+}
+
+.sidebar-study-sub {
+    font-size: 0.6875rem;
+    color: #C7D2E5;
+}
+
+.sidebar-nav-bottom {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* Collapsed adjustments */
+.sidebar-collapsed .sidebar-link {
+    justify-content: center;
+    padding: 0.75rem;
+}
+
+.sidebar-collapsed .sidebar-brand {
+    justify-content: center;
+    padding: 1.25rem 0.5rem;
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        transform: translateX(-100%);
+    }
+
+    .sidebar.mobile-open {
+        transform: translateX(0);
+    }
+}
+
+/* ── Drag & Drop Reordering ── */
+.sidebar-drag-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    border-radius: var(--radius);
+    transition: background 0.15s ease;
+}
+
+.sidebar-drag-wrapper[draggable='true'] {
+    cursor: grab;
+}
+
+.sidebar-drag-wrapper[draggable='true']:active {
+    cursor: grabbing;
+}
+
+.sidebar-drag-handle {
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--gray-400);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.sidebar-drag-wrapper:hover .sidebar-drag-handle {
+    opacity: 1;
+}
+
+/* Drag-over indicator */
+.sidebar-drag-over {
+    background: rgba(20, 184, 166, 0.08);
+    box-shadow: inset 0 -2px 0 0 var(--accent-light, #14b8a6);
+    border-radius: var(--radius);
+}
+
+/* While dragging, reduce opacity of source item */
+.sidebar-drag-wrapper:active {
+    opacity: 0.5;
+}
+
+/* Make sure the NavLink inside still fills the space */
+.sidebar-drag-wrapper .sidebar-link {
+    flex: 1;
+}
+
+/* Collapsed: no grip handle, no drag affordance style */
+.sidebar-collapsed .sidebar-drag-handle {
+    display: none;
+}
+
+.sidebar-collapsed .sidebar-drag-wrapper {
+    justify-content: center;
+}

@@ -1,0 +1,82 @@
+.toast-container {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    max-width: min(400px, calc(100vw - 2rem));
+    pointer-events: none;
+}
+
+.toast-container > * {
+    pointer-events: auto;
+}
+
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+}
+
+.toast-success {
+    border-left: 4px solid var(--success);
+}
+
+.toast-success .toast-icon {
+    color: var(--success);
+    flex-shrink: 0;
+}
+
+.toast-error {
+    border-left: 4px solid var(--error);
+}
+
+.toast-error .toast-icon {
+    color: var(--error);
+    flex-shrink: 0;
+}
+
+.toast-message {
+    flex: 1;
+    font-size: 0.9rem;
+    color: var(--foreground);
+}
+
+.toast-dismiss {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--gray-500);
+    cursor: pointer;
+    transition: color 0.2s, background 0.2s;
+}
+
+.toast-dismiss:hover {
+    color: var(--foreground);
+    background: var(--gray-100);
+}
+
+.toast-dismiss:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+[data-theme='dark'] .toast {
+    background: var(--surface-1);
+    border-color: var(--border);
+}
+
+[data-theme='dark'] .toast-dismiss:hover {
+    background: var(--surface-2);
+}

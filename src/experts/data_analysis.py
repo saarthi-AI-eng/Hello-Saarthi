@@ -11,8 +11,8 @@ ExpertResponse and no other agent is affected.
 import logging
 from typing import List, Dict, Any
 
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from src.utils.llm import chat_llm
 from src.schemas.models import ExpertResponse, ExpertName
 from src.tools.data_tools import DATA_TOOLS
 
@@ -53,7 +53,7 @@ def run_data_analysis_agent(query: str, messages: List[Dict[str, Any]] = []) -> 
     """
     logger.info(f"--- Running Data Analysis Agent for: {query} ---")
 
-    llm = ChatOpenAI(model="gpt-4.1", temperature=0)
+    llm = chat_llm(temperature=0)
     llm_with_tools = llm.bind_tools(DATA_TOOLS)
 
     # Build conversation history

@@ -13,3 +13,9 @@ class AgentState(TypedDict):
     mind_mode: bool
     planning: bool
     next_step: str
+    plan: List[str]
+    retrieved_chunks: List[Any]
+    critic_ok: bool
+    critic_notes: str
+    boost_terms: List[str]   # e.g. the student's weak topics; reorders retrieval only
+    tier: Optional[int]      # model tier chosen by the chat policy (1 small/local, 2 full/cloud)

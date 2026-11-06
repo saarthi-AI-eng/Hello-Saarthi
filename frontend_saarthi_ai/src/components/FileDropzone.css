@@ -1,0 +1,105 @@
+.file-dropzone-wrapper {
+    width: 100%;
+}
+
+.file-dropzone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius-md);
+    padding: 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+}
+
+.file-dropzone:hover:not(.file-dropzone-disabled):not(.file-dropzone-has-file) {
+    border-color: var(--accent);
+    background: rgba(31, 168, 154, 0.12);
+}
+
+.file-dropzone-dragging {
+    border-color: var(--accent);
+    background: rgba(31, 168, 154, 0.14);
+}
+
+.file-dropzone-disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.file-dropzone-has-file {
+    border-style: solid;
+    border-color: var(--success);
+    background: var(--success-50);
+}
+
+.file-dropzone-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.file-dropzone-input:disabled {
+    cursor: not-allowed;
+}
+
+.file-dropzone-icon {
+    color: var(--gray-400);
+    display: block;
+    margin: 0 auto 0.5rem;
+}
+
+.file-dropzone-text {
+    display: block;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.file-dropzone-hint {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+.file-dropzone-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.file-dropzone-filename {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-dropzone-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    border: none;
+    background: transparent;
+    color: var(--gray-500);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+}
+
+.file-dropzone-clear:hover {
+    color: var(--error);
+    background: var(--error-50);
+}
+
+.file-dropzone-error {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    color: var(--error);
+}
