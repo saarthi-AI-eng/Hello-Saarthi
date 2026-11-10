@@ -46,7 +46,7 @@ from typing import Dict, List, Optional, Tuple
 from PIL import Image
 
 from scripts.content_common import PROCESSED_OCR_DIR, RAW_NOTES_DIR, get_logger, log_operation
-from scripts.schemas import ContentRecord, ContentType, ProcessingStatus, QAStatus, write_jsonl
+from scripts.schemas import ContentRecord, ContentType, ProcessingStatus, QAStatus, read_jsonl, record_to_dict, write_jsonl
 
 logger = get_logger("ingest_notes")
 
@@ -55,6 +55,28 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SUPPORTED_EXTENSIONS = PDF_EXTENSIONS | IMAGE_EXTENSIONS
 
 _MIN_NATIVE_TEXT_CHARS = 20  # below this, a PDF page is treated as scanned/image-based
+
+# Scanner apps sometimes stamp a watermark into the PDF's native text layer
+# even on a page that is otherwise a pure image scan. Measured, real bug in
+# this project's own expanded raw-data set: 3 PDFs (~39 pages total) were
+# scanned with CamScanner, which stamps "Scanned with CamScanner" (24 chars)
+# as the ENTIRE native text layer on every page — above _MIN_NATIVE_TEXT_CHARS,
+# so the native-text-layer shortcut would have silently treated these pages
+# as "has real native text", stored that watermark string as the page's
+# entire content, and never run OCR at all, losing 100% of the actual
+# handwritten notes. Known watermark substrings are stripped before the
+# native-text-length check (and from the content actually stored, in case a
+# page genuinely has both real text and the watermark).
+_KNOWN_PDF_WATERMARKS = [
+    "Scanned with CamScanner",
+]
+
+
+def _strip_known_watermarks(text: str) -> str:
+    cleaned = text
+    for pattern in _KNOWN_PDF_WATERMARKS:
+        cleaned = cleaned.replace(pattern, "")
+    return cleaned.strip()
 
 # Confidence-tier thresholds (requirement: >=0.70 high, 0.50-0.70 moderate, <0.50 low).
 # Unknown confidence (backend reported none) is treated as "low" — conservative,
@@ -368,7 +390,7 @@ def _attempt_rank(text: str, confidence: Optional[float]) -> tuple:
 def ocr_image(image: Image.Image, preprocess: bool = True) -> OCRResult:
     """Run OCR on a PIL image: multiple preprocessing variants x Tesseract page
     segmentation modes, then a region-based pass on the best variant, then — only
-    if the result is still low-confidence and SAARTHI_HANDWRITING_OCR is set — an
+    if the result isn't high-confidence and SAARTHI_HANDWRITING_OCR is set — an
     optional handwriting-model fallback. Keeps whichever attempt ranks best (see
     _attempt_rank). Never invents a confidence score, never "corrects" recognized
     text — only what a backend actually produced is ever returned."""
@@ -433,13 +455,33 @@ def ocr_image(image: Image.Image, preprocess: bool = True) -> OCRResult:
         except Exception as exc:  # noqa: BLE001 — a bonus attempt; must never abort the page on failure
             logger.warning(f"Region-based OCR attempt failed, keeping whole-page result: {exc}")
 
-    # Optional handwriting-specialized OCR fallback — only reached when
-    # Tesseract's best result is genuinely low-confidence AND the operator
-    # opted in via SAARTHI_HANDWRITING_OCR. If the backend/dependency is
+    # Optional handwriting-specialized OCR fallback — reached whenever
+    # Tesseract's best result isn't "high" confidence AND the operator opted
+    # in via SAARTHI_HANDWRITING_OCR. If the backend/dependency is
     # unavailable, this must never break the normal Tesseract-only pipeline.
-    tier = _confidence_tier(best.text, best.confidence)
+    #
+    # Deliberately tier != "high", not tier == "low": measured against
+    # data/evaluation/ocr_ground_truth_all.jsonl, Tesseract's own
+    # image_to_data confidence on genuinely garbled handwriting can land in
+    # the "moderate" (0.50-0.70) bucket even though the text is unusable —
+    # pytesseract's score reflects per-word recognition certainty, not
+    # whether the reading is semantically right. Two of six ground-truth
+    # pages were kept as garbled "moderate"-tier Tesseract output because
+    # the old "low"-only trigger never gave the fallback a chance. Running
+    # the fallback on "moderate" pages too costs one extra GPU PaddleOCR
+    # pass (~1-6s measured) per page, not a second Tesseract sweep.
+    # Strip known watermarks before computing the tier used for this
+    # decision, not just afterward in _ocr_page_metadata: a page whose only
+    # recognizable content IS a watermark (e.g. "Scanned with CamScanner")
+    # gets read by Tesseract cleanly and confidently — real case measured on
+    # AnalogFilters.pdf pages 10/11, confidence 0.86-0.94 on the watermark
+    # text alone, which looked "high" enough to skip the fallback entirely,
+    # even though the page's actual content (a diagram) produced zero real
+    # text. Stripping first means an all-watermark page correctly reads as
+    # empty here too, so the fallback still gets a chance.
+    tier = _confidence_tier(_strip_known_watermarks(best.text), best.confidence)
     handwriting_backend = os.environ.get("SAARTHI_HANDWRITING_OCR", "").strip().lower()
-    if tier == "low" and handwriting_backend:
+    if tier != "high" and handwriting_backend:
         try:
             hw_result = run_handwriting_ocr(image, handwriting_backend, bands)
             hw_rank = _attempt_rank(hw_result.text, hw_result.confidence)
@@ -456,6 +498,45 @@ def _is_valid_conf(raw) -> bool:
         return int(raw) >= 0
     except (TypeError, ValueError):
         return False
+
+
+def run_light_tesseract(image: Image.Image) -> OCRResult:
+    """Single Tesseract attempt (--psm 6, no preprocessing-variant sweep) —
+    for use as a per-region FALLBACK, not the primary page-level pipeline.
+
+    ocr_image() above is deliberately expensive (5 preprocessing variants x
+    3 PSM modes + a region re-pass, ~15-20 actual Tesseract invocations) —
+    appropriate when Tesseract IS the primary attempt on a whole,
+    not-yet-understood page. Calling that full sweep again as a FALLBACK for
+    every individually low-confidence region is wasteful: measured in this
+    project's hybrid pipeline, chaining the full ocr_image() fallback per
+    region pushed mean processing to 263.6s/page (2.8x plain PaddleOCR) for
+    only an 11% relative CER improvement. The region is already cropped from
+    a sensibly-segmented source; --psm 6 (uniform block of text) is the
+    right default for a single pre-cropped region the same way it's the
+    first variant tried in the full sweep, without re-running the variant
+    search a cropped region doesn't need as much as a whole page does."""
+    try:
+        import pytesseract
+        from pytesseract import Output
+    except ImportError as exc:
+        raise RuntimeError(
+            "pytesseract is not installed. Install it with `pip install -r "
+            "requirements-content-pipeline.txt`. See docs/content-management.md for details."
+        ) from exc
+
+    _resolve_tesseract_cmd(pytesseract)
+
+    try:
+        text, confidence = _run_tesseract_attempt(pytesseract, Output, image, psm=6)
+    except pytesseract.TesseractNotFoundError as exc:
+        raise RuntimeError(
+            "The Tesseract OCR binary is not installed or not on PATH "
+            f"(pytesseract looked for {pytesseract.pytesseract.tesseract_cmd!r}). "
+            "See docs/content-management.md for details."
+        ) from exc
+
+    return OCRResult(text=text, confidence=confidence, engine="tesseract", preprocessing=None, psm=6)
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +676,28 @@ def run_handwriting_ocr(image: Image.Image, backend: str, regions: Optional[List
 _PADDLEOCR_INSTANCE_CACHE: Dict[str, "object"] = {}
 
 
+def _detect_paddleocr_device() -> str:
+    """Auto-detects whether this machine can actually use PaddleOCR on
+    GPU — never assumes the RTX 4060 this was benchmarked on
+    (docs/ocr-benchmark-final-report.md: ~24x faster than CPU, no
+    accuracy tradeoff, on THAT machine) is present elsewhere. Checked at
+    runtime via paddle itself (compiled-with-CUDA + at least one visible
+    device), not inferred from any hardcoded GPU name/index/VRAM size.
+    Falls back to CPU (with a clear log message, never a crash) if paddle
+    isn't CUDA-enabled, no GPU is visible, or the check itself errors for
+    any reason (e.g. driver/toolkit mismatch on an unfamiliar machine)."""
+    try:
+        import paddle
+
+        if paddle.device.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
+            return "gpu"
+    except Exception as exc:  # noqa: BLE001 — detection must never crash startup; CPU always works
+        logger.warning(f"GPU detection for PaddleOCR failed ({exc}); falling back to CPU.")
+        return "cpu"
+    logger.info("No CUDA-enabled PaddlePaddle GPU detected — using CPU for PaddleOCR (this will be slower; see docs/ocr-benchmark-final-report.md for the measured GPU/CPU difference).")
+    return "cpu"
+
+
 def _get_paddleocr_instance(lang: str):
     """Lazily construct and cache a PaddleOCR pipeline instance (one per
     language — re-creating it per page would reload the detection/recognition
@@ -602,12 +705,17 @@ def _get_paddleocr_instance(lang: str):
     if lang not in _PADDLEOCR_INSTANCE_CACHE:
         from paddleocr import PaddleOCR
 
-        logger.info(f"Loading PaddleOCR (lang={lang!r}, first use only, cached for this run)...")
+        device = os.environ.get("SAARTHI_PADDLEOCR_DEVICE") or _detect_paddleocr_device()
+        logger.info(f"Loading PaddleOCR (lang={lang!r}, device={device!r}, first use only, cached for this run)...")
         _PADDLEOCR_INSTANCE_CACHE[lang] = PaddleOCR(
             lang=lang,
             text_detection_model_name=os.environ.get("SAARTHI_PADDLEOCR_DET_MODEL") or None,
             text_recognition_model_name=os.environ.get("SAARTHI_PADDLEOCR_REC_MODEL") or None,
-            device=os.environ.get("SAARTHI_PADDLEOCR_DEVICE", "cpu"),
+            # Auto-detected above — never hardcoded to this dev machine's
+            # GPU. SAARTHI_PADDLEOCR_DEVICE, if set, always wins (explicit
+            # operator override, e.g. to force "cpu" or target a specific
+            # "gpu:N" on a multi-GPU box).
+            device=device,
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=_env_flag("SAARTHI_PADDLEOCR_TEXTLINE_ORIENTATION"),
@@ -741,6 +849,478 @@ def _light_clean(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Page-level quality classification — independent of engine confidence.
+# ---------------------------------------------------------------------------
+# Measured against this project's own real data (AnalogFilters.pdf, 17 pages):
+# engine-reported confidence does not reliably predict correctness on dense
+# handwritten math — pages with ~23 characters of near-garbage text (10, 11,
+# 15) and pages with visibly garbled math worked-examples (4, 6, 7, 13, 16,
+# 17) both reported "high" confidence (0.74-0.94) from their winning engine.
+# These thresholds were inspection-calibrated against all 17 real pages, not
+# picked arbitrarily — see docs/ocr-benchmark-final-report.md.
+#
+# Deliberately duplicated, not imported, from scripts/verification.py's
+# check_character_anomalies (same repeated-run regex family, same threshold):
+# ingest_notes.py's production path has zero import-time coupling to the
+# opt-in evaluation/dev tooling, and this is cheap enough (one small regex)
+# that a one-line duplicate is simpler than creating that coupling for a
+# default, always-on page classification.
+_REPEATED_RUN_RE = re.compile(r"(.{1,12}?)\1{19,}")
+_WORDLIKE_RE = re.compile(r"[A-Za-z]{3,}")
+_PAGE_QUALITY_MATH_CHARS = set("=+-*/^_<>≤≥≠∑∫πθωΩαβγδλμσΣ∏√∞±÷×")
+_PAGE_QUALITY_MATH_DENSITY_THRESHOLD = 0.04
+_PAGE_QUALITY_NEAR_EMPTY_CHARS = 60
+_PAGE_QUALITY_MIN_TOKENS_FOR_FRAGMENTATION_CHECK = 4
+_PAGE_QUALITY_WORDLIKE_RATIO_THRESHOLD = 0.35
+# A single formula line can be badly garbled inside an otherwise-good,
+# mostly-prose page (measured: AnalogFilters.pdf page 1 — "Lowpass
+# Butterwoith.\n1HC2)^2=\n1+E" buried in 560 characters of decent prose,
+# whole-page math density far below the threshold above). Checking per
+# LINE as well as the whole-page average catches that case without an
+# extra OCR/region pass — still a cheap, text-only check, and still a
+# general mechanism (any page with one dense-enough line), not a rule
+# aimed at this one page specifically.
+_PAGE_QUALITY_LINE_MATH_DENSITY_THRESHOLD = 0.12
+_PAGE_QUALITY_LINE_MIN_CHARS_FOR_DENSITY_CHECK = 6
+
+
+def classify_page_quality(text: str, confidence: Optional[float]) -> Tuple[str, List[str]]:
+    """GOOD / NEEDS_REVIEW / POOR_EXTRACTION + the reasons, computed purely
+    from the recognized text (+ whether a confidence score exists at all) —
+    never from the raw confidence NUMBER, which this project has repeatedly
+    measured as uncorrelated with actual correctness on this content."""
+    stripped = text.strip()
+    length = len(stripped)
+    reasons: List[str] = []
+
+    if length == 0:
+        reasons.append("EMPTY_OUTPUT")
+    elif length < _PAGE_QUALITY_NEAR_EMPTY_CHARS:
+        reasons.append("NEAR_EMPTY_OUTPUT")
+
+    if _REPEATED_RUN_RE.search(stripped):
+        reasons.append("SUSPICIOUS_REPETITION")
+
+    tokens = stripped.split()
+    if len(tokens) >= _PAGE_QUALITY_MIN_TOKENS_FOR_FRAGMENTATION_CHECK:
+        wordlike = _WORDLIKE_RE.findall(stripped)
+        if (len(wordlike) / len(tokens)) < _PAGE_QUALITY_WORDLIKE_RATIO_THRESHOLD:
+            reasons.append("FRAGMENTED_TEXT")
+
+    non_space = [c for c in stripped if not c.isspace()]
+    math_hit = False
+    if non_space:
+        math_density = sum(1 for c in non_space if c in _PAGE_QUALITY_MATH_CHARS) / len(non_space)
+        math_hit = math_density >= _PAGE_QUALITY_MATH_DENSITY_THRESHOLD
+    if not math_hit:
+        for line in stripped.split("\n"):
+            line_non_space = [c for c in line if not c.isspace()]
+            if len(line_non_space) < _PAGE_QUALITY_LINE_MIN_CHARS_FOR_DENSITY_CHECK:
+                continue
+            line_density = sum(1 for c in line_non_space if c in _PAGE_QUALITY_MATH_CHARS) / len(line_non_space)
+            if line_density >= _PAGE_QUALITY_LINE_MATH_DENSITY_THRESHOLD:
+                math_hit = True
+                break
+    if math_hit:
+        reasons.append("MATHEMATICAL_CONTENT")
+
+    if confidence is None:
+        reasons.append("NO_CONFIDENCE_SCORE")
+
+    severe = {"EMPTY_OUTPUT", "NEAR_EMPTY_OUTPUT", "SUSPICIOUS_REPETITION", "FRAGMENTED_TEXT"}
+    if any(r in severe for r in reasons):
+        label = "POOR_EXTRACTION"
+    elif "MATHEMATICAL_CONTENT" in reasons or "NO_CONFIDENCE_SCORE" in reasons:
+        label = "NEEDS_REVIEW"
+    else:
+        label = "GOOD"
+    return label, reasons
+
+
+# ---------------------------------------------------------------------------
+# Conservative spelling correction — a small, curated, exact-match (case-
+# insensitive) whitelist of real OCR misreads, NOT a generic dictionary/
+# fuzzy spellchecker. A generic approach risks "correcting" a technical
+# variable name (Hs, Tn, Rc, wp...) into an unrelated real English word;
+# this whitelist contains zero tokens that look like variable names, so
+# there is no such risk by construction. Every entry was confirmed against
+# this project's own real OCR output (data/processed/ocr_improved/
+# AnalogFilters.jsonl) and the original PDF's actual wording — never
+# guessed. No new dependency: pure stdlib regex substitution.
+#
+# Confidence < _SPELLING_AUTO_APPLY_THRESHOLD is reported in
+# `spelling_corrections` metadata but NEVER auto-applied to the text — e.g.
+# "reifoim" could plausibly be "Reform" or "Perform" in isolation; flagged
+# for manual review rather than silently guessed either way.
+_SPELLING_CORRECTIONS: Dict[str, Tuple[str, float]] = {
+    "cheractristic": ("characteristic", 0.95),
+    "cheractristics": ("characteristics", 0.95),
+    "butterwoith": ("butterworth", 0.95),
+    "buttarworth": ("butterworth", 0.95),
+    "freqeuency": ("frequency", 0.95),
+    "prescrving": ("preserving", 0.9),
+    "chebyiher": ("chebyshev", 0.9),
+    "epossible": ("possible", 0.85),
+    "atknuatim": ("attenuation", 0.75),
+    "atknuatin": ("attenuation", 0.75),
+    "cattententia": ("attenuation", 0.6),
+    "parsband": ("passband", 0.85),
+    "parstand": ("passband", 0.85),
+    "ffilter": ("filter", 0.9),
+    "fiter": ("filter", 0.9),
+    "designi": ("design", 0.85),
+    "propertics": ("properties", 0.85),
+    "resporse": ("response", 0.85),
+    "roats": ("roots", 0.75),
+    "squlared": ("squared", 0.85),
+    "incrcajing": ("increasing", 0.7),
+    "kiven": ("given", 0.75),
+    "iaterval": ("interval", 0.6),
+    "reifoim": ("reform", 0.6),
+}
+_SPELLING_AUTO_APPLY_THRESHOLD = 0.7
+_SPELLING_WORD_RE = re.compile(r"[A-Za-z]+")
+
+
+def apply_spelling_corrections(text: str) -> Tuple[str, List[dict]]:
+    """Returns (corrected_text, corrections) — corrections is a list of
+    {"original", "suggested", "confidence", "applied"} for every candidate
+    found, whether or not it was actually applied to the returned text."""
+    corrections: List[dict] = []
+
+    def _replace(match: "re.Match[str]") -> str:
+        word = match.group(0)
+        entry = _SPELLING_CORRECTIONS.get(word.lower())
+        if entry is None:
+            return word
+        correction, confidence = entry
+        applied = confidence >= _SPELLING_AUTO_APPLY_THRESHOLD
+        corrections.append({"original": word, "suggested": correction, "confidence": confidence, "applied": applied})
+        if not applied:
+            return word
+        if word.isupper():
+            return correction.upper()
+        if word[0].isupper():
+            return correction.capitalize()
+        return correction
+
+    corrected_text = _SPELLING_WORD_RE.sub(_replace, text)
+    return corrected_text, corrections
+
+
+# ---------------------------------------------------------------------------
+# Math-specific OCR improvement — equation-block grouping, context-aware
+# symbol normalization, and a second-opinion hypothesis at higher
+# resolution. Opt-in (SAARTHI_MATH_ANALYSIS=1), additive, never replaces
+# the page's primary text or the existing math_regions/
+# full_page_region_candidates from the prior iteration.
+#
+# Dedicated formula-recognition models were re-evaluated, not assumed to
+# be worse: UniMERNet (already set up in this project's isolated venv —
+# scripts/unimernet_adapter.py, zero new download) was run against the
+# real Butterworth-formula crop from AnalogFilters.pdf page 1
+# ([0, 2500, 2893, 2936]). Result: 36.4s (vs. ~1-6s for PaddleOCR on a
+# whole page) and syntactically LaTeX-shaped but semantically meaningless
+# output ("\hat{w}_1 -> oracler_flecter" repeated nonsense) — consistent
+# with this project's prior finding that UniMERNet struggles on real
+# handwriting (it's trained on printed/typeset formulas), and worse: this
+# crop also mixes in ordinary prose ("Lowpass Butterworth."), which a
+# formula-only model has no way to handle correctly. Not integrated — see
+# docs/analogfilters-math-ocr-improvement-report.md §2 for the full
+# finding. Pix2Text was not installed/evaluated: no local checkpoint
+# exists, and a second dedicated-model download is a weak bet given
+# UniMERNet and PP-FormulaNet (prior session) both already failed on this
+# project's real handwritten content.
+# ---------------------------------------------------------------------------
+
+# Vertical gap (pixels, at native page render resolution) below which two
+# math-dense OCR lines are considered part of the same equation block, not
+# two separate ones. Inspection-calibrated against AnalogFilters.pdf's own
+# line bboxes (typical single-line height ~100-150px at 350 DPI).
+_MATH_BLOCK_MAX_LINE_GAP_PX = 150
+_MATH_BLOCK_CROP_PADDING_PX = 20
+_MATH_BLOCK_UPSCALE_FACTOR = 2
+# Size caps on a single equation block, independent of the gap check above
+# — see the comment at the grouping loop below for the real page-14 case
+# these prevent. ~8 lines / ~1800px is generous for one real multi-line
+# formula on this project's own pages (inspection-calibrated), without
+# letting an uninterrupted dense run grow unbounded.
+_MATH_BLOCK_MAX_LINES = 8
+_MATH_BLOCK_MAX_HEIGHT_PX = 1800
+
+# Context-aware, curated, exact-match math-OCR-symbol corrections — the
+# math-specific sibling of _SPELLING_CORRECTIONS, kept separate because
+# these patterns (e.g. "10g") would be actively wrong to apply to ordinary
+# prose. Every entry confirmed against this project's own real OCR output
+# (data/processed/ocr_final_test/AnalogFilters.jsonl pages 2, 4, 16).
+# Confidence is boosted when the token is immediately followed by "(" in
+# the source text (this corpus's "log"/"ln" is overwhelmingly followed by
+# an opening parenthesis) — a real, cheap, local-context signal, not a
+# global blind replace.
+_MATH_TOKEN_CORRECTIONS: Dict[str, Tuple[str, float]] = {
+    "10g": ("log", 0.55),
+    "l0g": ("log", 0.55),
+    "1og": ("log", 0.5),
+    "loy": ("log", 0.35),
+    "2l0g": ("2log", 0.45),
+}
+_MATH_TOKEN_FOLLOWED_BY_BRACKET_BONUS = 0.35
+_MATH_TOKEN_AUTO_APPLY_THRESHOLD = 0.75
+_MATH_TOKEN_RE = re.compile(r"[A-Za-z0-9]+[(\[]?")
+
+
+def normalize_math_text(text: str) -> Tuple[str, List[dict]]:
+    """Conservative, confidence-scored math-symbol normalization (e.g.
+    "10g(x)" -> "log(x)"). Returns (normalized_text, corrections) —
+    corrections lists every candidate with {"original", "suggested",
+    "confidence", "applied"}, whether or not it was actually applied.
+    Never a blind global replace: confidence depends on local context (is
+    this token immediately followed by an opening "(" or "[" — this
+    corpus's log/ln calls use both), and only entries at/above
+    _MATH_TOKEN_AUTO_APPLY_THRESHOLD are applied."""
+    corrections: List[dict] = []
+
+    def _replace(match: "re.Match[str]") -> str:
+        raw = match.group(0)
+        bracket = raw[-1] if raw[-1] in "([" else ""
+        word = raw[:-1] if bracket else raw
+        entry = _MATH_TOKEN_CORRECTIONS.get(word.lower())
+        if entry is None or entry[1] <= 0:
+            return raw
+        correction, base_confidence = entry
+        confidence = min(0.95, base_confidence + (_MATH_TOKEN_FOLLOWED_BY_BRACKET_BONUS if bracket else 0.0))
+        applied = confidence >= _MATH_TOKEN_AUTO_APPLY_THRESHOLD
+        corrections.append({"original": word, "suggested": correction, "confidence": round(confidence, 2), "applied": applied})
+        if not applied:
+            return raw
+        return correction + bracket
+
+    normalized = _MATH_TOKEN_RE.sub(_replace, text)
+    return normalized, corrections
+
+
+def _group_math_lines_from_ocr_lines(ocr_lines: Optional[List[dict]]) -> List[dict]:
+    """Groups spatially-adjacent, math-symbol-dense OCR lines (already
+    recognized by the page's primary OCR pass — zero extra OCR call for
+    this detection step) into equation blocks, using each line's existing
+    bbox. Returns [] when there are no math-candidate lines (so callers
+    can cheaply skip a page with no equations at all — see
+    process_pdf()'s SAARTHI_MATH_ANALYSIS gating)."""
+    if not ocr_lines:
+        return []
+
+    candidates = []
+    for line in ocr_lines:
+        text = (line.get("text") or "").strip()
+        bbox = line.get("bbox")
+        if not text or not bbox:
+            continue
+        non_space = [c for c in text if not c.isspace()]
+        if not non_space:
+            continue
+        density = sum(1 for c in non_space if c in _PAGE_QUALITY_MATH_CHARS) / len(non_space)
+        if density >= _PAGE_QUALITY_LINE_MATH_DENSITY_THRESHOLD:
+            candidates.append((tuple(bbox), text, line.get("confidence")))
+
+    if not candidates:
+        return []
+
+    candidates.sort(key=lambda c: c[0][1])  # top-to-bottom, by bbox y0
+
+    blocks: List[List[tuple]] = [[candidates[0]]]
+    for item in candidates[1:]:
+        current = blocks[-1]
+        prev_bbox = current[-1][0]
+        gap = item[0][1] - prev_bbox[3]
+        prospective_height = item[0][3] - current[0][0][1]
+        # Split on gap OR on hitting a size cap — a long, uninterrupted
+        # run of math-dense lines (e.g. a multi-step derivation with no
+        # blank-row gap between steps) would otherwise keep growing into
+        # one oversized block that silently merges what are really
+        # separate derivation steps (measured: AnalogFilters.pdf page 14,
+        # one 11-line/1894px block covering what iteration 2's coarser
+        # band detector correctly saw as 3-4 separate bands). Still never
+        # splits a single short equation — both caps are generous enough
+        # for a normal few-line formula.
+        if (
+            gap <= _MATH_BLOCK_MAX_LINE_GAP_PX
+            and len(current) < _MATH_BLOCK_MAX_LINES
+            and prospective_height <= _MATH_BLOCK_MAX_HEIGHT_PX
+        ):
+            current.append(item)
+        else:
+            blocks.append([item])
+
+    results = []
+    for block in blocks:
+        x0 = min(b[0][0] for b in block)
+        y0 = min(b[0][1] for b in block)
+        x1 = max(b[0][2] for b in block)
+        y1 = max(b[0][3] for b in block)
+        confidences = [b[2] for b in block if b[2] is not None]
+        results.append({
+            "bbox": (x0, y0, x1, y1),
+            "text": "\n".join(b[1] for b in block),
+            "confidence": round(sum(confidences) / len(confidences), 4) if confidences else None,
+        })
+    return results
+
+
+# Deliberately NOT classify_page_quality's near-empty threshold (60 chars,
+# calibrated for whole PAGES): an equation block is a deliberately small
+# crop, legitimately 15-50 characters for a perfectly fine short formula —
+# reusing the page-level threshold flagged essentially every real block
+# POOR_EXTRACTION regardless of actual quality (measured: 100% of blocks
+# across all 17 real pages on first implementation, before this fix).
+_MATH_BLOCK_NEAR_EMPTY_CHARS = 8
+# Below this length ratio (shorter hypothesis / longer hypothesis, after
+# whitespace normalization), the two hypotheses aren't just "worded
+# differently" — one of them is missing a substantial chunk of content.
+# Distinguished from plain HYPOTHESIS_DISAGREEMENT (similar length, just
+# different readings) because a reviewer needs to know which failure mode
+# they're looking at — see docs/analogfilters-latest-math-ocr-evaluation.md
+# §7, the finding this fixes: a 90% raw-disagreement rate that didn't
+# distinguish "two real competing readings" from "one pass basically gave
+# up." Calibrated loosely (not against a labeled set — none exists): a
+# hypothesis missing more than half its partner's content is incomplete
+# by any reasonable reading.
+_MATH_HYPOTHESIS_INCOMPLETE_RATIO_THRESHOLD = 0.5
+
+
+def _classify_math_block_quality(primary_text: str, second_opinion_text: str) -> Tuple[str, List[str]]:
+    """GOOD/NEEDS_REVIEW/POOR_EXTRACTION/NOT_DETECTED for one equation
+    block. Reuses _REPEATED_RUN_RE (the same degenerate-repetition check
+    classify_page_quality uses) but NOT its near-empty/fragmentation/
+    word-ratio thresholds, which are calibrated for whole pages, not short
+    equation crops (see _MATH_BLOCK_NEAR_EMPTY_CHARS above). Independent
+    of the page's own page_quality — a page can be GOOD overall with a
+    badly garbled equation inside it, or vice versa.
+
+    Distinguishes (never conflates, per the evaluation's explicit finding
+    that lumping these together made the signal nearly uninformative):
+    - genuine agreement (no reason added — the common case should be
+      unremarkable, not flagged);
+    - two non-empty hypotheses that genuinely disagree, at similar length
+      (HYPOTHESIS_DISAGREEMENT — a real "which one is right?" case);
+    - one hypothesis substantially shorter/missing content relative to
+      the other (*_INCOMPLETE — never resolved by preferring the longer
+      one as "correct", just named so a reviewer knows which is which);
+    - the second opinion came back empty while the primary has real
+      content (SECOND_OPINION_EMPTY — informational only, does not by
+      itself demote a block that's otherwise fine: it means the second
+      *attempt* failed, not that the primary is wrong);
+    - the primary itself is empty while the second opinion found
+      something (PRIMARY_EMPTY — the more concerning direction, since
+      the primary is what actually reaches the page; kept at
+      POOR_EXTRACTION severity);
+    - both empty (NOT_DETECTED, unchanged from before)."""
+    primary_stripped = (primary_text or "").strip()
+    second_stripped = (second_opinion_text or "").strip()
+
+    if not primary_stripped and not second_stripped:
+        return "NOT_DETECTED", ["NO_TEXT_RECOGNIZED"]
+
+    reasons: List[str] = []
+    if primary_stripped and len(primary_stripped) < _MATH_BLOCK_NEAR_EMPTY_CHARS:
+        reasons.append("NEAR_EMPTY_OUTPUT")
+    if primary_stripped and _REPEATED_RUN_RE.search(primary_stripped):
+        reasons.append("SUSPICIOUS_REPETITION")
+
+    normalize_for_compare = lambda s: re.sub(r"\s+", "", s).lower()
+    norm_primary = normalize_for_compare(primary_stripped)
+    norm_second = normalize_for_compare(second_stripped)
+
+    if not primary_stripped and second_stripped:
+        reasons.append("PRIMARY_EMPTY")
+    elif primary_stripped and not second_stripped:
+        reasons.append("SECOND_OPINION_EMPTY")
+    elif norm_primary != norm_second:
+        shorter_len, longer_len = sorted([len(norm_primary), len(norm_second)])
+        if longer_len > 0 and shorter_len / longer_len < _MATH_HYPOTHESIS_INCOMPLETE_RATIO_THRESHOLD:
+            reasons.append("SECOND_OPINION_INCOMPLETE" if len(norm_second) < len(norm_primary) else "PRIMARY_INCOMPLETE")
+        else:
+            reasons.append("HYPOTHESIS_DISAGREEMENT")
+    # else: genuine agreement — no reason added.
+
+    severe = {"NEAR_EMPTY_OUTPUT", "SUSPICIOUS_REPETITION", "PRIMARY_EMPTY"}
+    moderate = {"HYPOTHESIS_DISAGREEMENT", "SECOND_OPINION_INCOMPLETE", "PRIMARY_INCOMPLETE"}
+    # SECOND_OPINION_EMPTY is deliberately in neither set — informational,
+    # per this function's docstring above.
+    if any(r in severe for r in reasons):
+        label = "POOR_EXTRACTION"
+    elif any(r in moderate for r in reasons):
+        label = "NEEDS_REVIEW"
+    else:
+        label = "GOOD"
+    return label, reasons
+
+
+def _analyze_math_equation_blocks(image: Image.Image, ocr_lines: Optional[List[dict]]) -> List[dict]:
+    """Opt-in (SAARTHI_MATH_ANALYSIS=1) math-equation-block extraction.
+    Groups existing OCR lines into blocks (_group_math_lines_from_ocr_lines
+    — no extra OCR call), crops + upscales each block
+    (_MATH_BLOCK_UPSCALE_FACTOR) and runs ONE additional recognition pass
+    on the upscaled crop as a second, independent hypothesis — higher
+    effective resolution can genuinely help small-symbol/subscript
+    recognition, and is cheap on GPU (~1-6s measured per page in
+    docs/ocr-benchmark-final-report.md §3). The two hypotheses are never
+    blindly merged: both are stored, and disagreement is flagged for
+    review (_classify_math_block_quality), never silently resolved by
+    picking whichever reports higher confidence (this project has
+    repeatedly measured engine confidence as unreliable on this content)."""
+    blocks = _group_math_lines_from_ocr_lines(ocr_lines)
+    if not blocks:
+        return []
+
+    results = []
+    for block in blocks:
+        x0, y0, x1, y1 = block["bbox"]
+        px0 = max(0, x0 - _MATH_BLOCK_CROP_PADDING_PX)
+        py0 = max(0, y0 - _MATH_BLOCK_CROP_PADDING_PX)
+        px1 = min(image.width, x1 + _MATH_BLOCK_CROP_PADDING_PX)
+        py1 = min(image.height, y1 + _MATH_BLOCK_CROP_PADDING_PX)
+        crop = image.crop((px0, py0, px1, py1))
+        upscaled = crop.resize((crop.width * _MATH_BLOCK_UPSCALE_FACTOR, crop.height * _MATH_BLOCK_UPSCALE_FACTOR), Image.LANCZOS)
+
+        second_opinion_text = ""
+        try:
+            second_opinion_text, _second_confidence, _lines = _paddleocr_ocr_image(upscaled)
+            second_opinion_text = _strip_known_watermarks(second_opinion_text)
+        except Exception as exc:  # noqa: BLE001 — the second opinion is best-effort; the first hypothesis must still stand
+            logger.warning(f"Math equation-block second-opinion OCR failed, keeping the primary-pass text only: {exc}")
+
+        primary_text = _strip_known_watermarks(block["text"])
+        normalized_text, math_normalizations = normalize_math_text(primary_text)
+        math_quality, math_quality_reasons = _classify_math_block_quality(primary_text, second_opinion_text)
+
+        # Bbox safety validation (shared with _analyze_page_regions, see
+        # validate_equation_bbox) — never discards the block or its OCR
+        # output; a suspiciously-large bbox just adds a reason and, if the
+        # block would otherwise have looked clean, bumps it to review.
+        _bbox_is_valid, _bbox_reasons = validate_equation_bbox((px0, py0, px1, py1), image.width, image.height)
+        if _bbox_reasons:
+            math_quality_reasons = math_quality_reasons + _bbox_reasons
+            if not _bbox_is_valid or ("SUSPICIOUSLY_LARGE_BBOX" in _bbox_reasons and math_quality == "GOOD"):
+                math_quality = "NEEDS_REVIEW"
+
+        results.append({
+            "bbox": [px0, py0, px1, py1],
+            "region_type": "mathematical_expression",
+            "ocr_text_raw": primary_text,
+            "second_opinion_text": second_opinion_text,
+            "normalized_text": normalized_text,
+            "math_normalizations": math_normalizations,
+            "latex": None,  # UniMERNet evaluated and rejected this iteration (see module docstring above) — never populated
+            "engine": "paddleocr",
+            "confidence": block["confidence"],
+            "math_quality": math_quality,
+            "math_quality_reasons": math_quality_reasons,
+            "review_required": True,
+        })
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Core per-page / per-image pipeline
 # ---------------------------------------------------------------------------
 
@@ -749,8 +1329,18 @@ def _ocr_page_metadata(result: OCRResult, dpi: Optional[int]) -> tuple[str, dict
     flagging (never dropping) a page whose best attempt came back empty or
     low-confidence. `ocr_method` duplicates `ocr_engine` deliberately, matching
     the metadata shape documented in docs/content-management.md."""
-    text = _light_clean(result.text)
-    tier = _confidence_tier(text, result.confidence)
+    text_uncorrected = _light_clean(_strip_known_watermarks(result.text))
+    tier = _confidence_tier(text_uncorrected, result.confidence)
+    quality_label, quality_reasons = classify_page_quality(text_uncorrected, result.confidence)
+    text, spelling_corrections = apply_spelling_corrections(text_uncorrected)
+
+    ocr_lines = result.lines
+    if ocr_lines:
+        ocr_lines = [
+            {**line, "text": _strip_known_watermarks(line.get("text", ""))}
+            for line in ocr_lines
+        ]
+
     metadata = {
         "ocr_engine": result.engine,
         "ocr_method": result.engine,
@@ -761,9 +1351,141 @@ def _ocr_page_metadata(result: OCRResult, dpi: Optional[int]) -> tuple[str, dict
         "psm": result.psm,
         "dpi": dpi,
         "extraction_method": _describe_extraction(result),
-        "ocr_lines": result.lines,
+        "ocr_lines": ocr_lines,
+        "ocr_text_raw": result.text,
+        "text_uncorrected": text_uncorrected,
+        "spelling_corrections": spelling_corrections,
+        "page_quality": quality_label,
+        "review_reasons": quality_reasons,
+        "visual_content_reference": (
+            "[Possible visual content — refer to original PDF for this page]"
+            if ("EMPTY_OUTPUT" in quality_reasons or "NEAR_EMPTY_OUTPUT" in quality_reasons)
+            else None
+        ),
+        "math_regions": [],
+        "visual_regions": [],
+        "full_page_region_candidates": [],
+        "math_equation_blocks": [],
     }
     return text, metadata
+
+
+def _append_jsonl_record(record: ContentRecord, path: Path) -> None:
+    """Append one record immediately, for page-level checkpointing — a crash
+    partway through a long PDF loses only the page in progress, not every
+    page already completed. Append-only, never rewrites prior lines."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record_to_dict(record), ensure_ascii=False))
+        f.write("\n")
+
+
+def _load_checkpoint(path: Optional[Path]) -> Dict[int, ContentRecord]:
+    """Pages already completed by a prior, interrupted run — keyed by page
+    number. skip_invalid=True tolerates a partially-written last line (the
+    exact line being written when a crash happened)."""
+    if path is None or not path.exists():
+        return {}
+    return {r.page: r for r in read_jsonl(path, skip_invalid=True) if r.page is not None}
+
+
+_FULL_PAGE_AREA_RATIO_THRESHOLD = 0.6  # bbox area / page area >= this => "full-page candidate", not a localized region
+
+
+def validate_equation_bbox(bbox: Tuple[int, int, int, int], page_width: int, page_height: int) -> Tuple[bool, List[str]]:
+    """Reusable bbox safety check — shared by _analyze_page_regions (the
+    coarse band mechanism, below) and _analyze_math_equation_blocks (the
+    finer line-bbox mechanism) rather than duplicating the same area-ratio
+    arithmetic twice. Never used to silently discard a region: callers
+    record the returned reasons as review metadata and keep the region's
+    OCR output regardless of what this returns.
+
+    Returns (is_valid, reasons). is_valid is False only for malformed/
+    out-of-bounds coordinates — which should not normally occur, since
+    callers clamp against page bounds before building a bbox — and
+    reasons can be non-empty even when is_valid is True (e.g. a
+    structurally fine but suspiciously page-sized bbox)."""
+    x0, y0, x1, y1 = bbox
+    reasons: List[str] = []
+    if x0 < 0 or y0 < 0 or x1 > page_width or y1 > page_height or x0 >= x1 or y0 >= y1:
+        reasons.append("OUT_OF_BOUNDS")
+        return False, reasons
+    area = (x1 - x0) * (y1 - y0)
+    page_area = page_width * page_height
+    if page_area > 0 and (area / page_area) >= _FULL_PAGE_AREA_RATIO_THRESHOLD:
+        reasons.append("SUSPICIOUSLY_LARGE_BBOX")
+    return True, reasons
+
+
+def _analyze_page_regions(image: Image.Image, page_number: int) -> Tuple[List[dict], List[dict], List[dict]]:
+    """Opt-in, additive region-level analysis for one rendered page image.
+    Reuses scripts.layout_detector.detect_regions + scripts.recognition_router.
+    recognize_region directly (the same tooling scripts.hybrid_pipeline.
+    process_page_hybrid wires together) rather than that orchestrator itself,
+    specifically so a region whose bbox covers most of the page can be
+    skipped BEFORE paying for a duplicate OCR call on it — see
+    _FULL_PAGE_AREA_RATIO_THRESHOLD below. Never changes which text
+    process_pdf() stores as the page's primary text.
+    Returns (math_regions, visual_regions, full_page_candidates)."""
+    from scripts.layout_detector import detect_regions, refine_region_with_text
+    from scripts.recognition_router import recognize_region
+
+    regions, canonical_image = detect_regions(image, page_number)
+
+    math_regions: List[dict] = []
+    visual_regions: List[dict] = []
+    full_page_candidates: List[dict] = []
+
+    for region in regions:
+        _bbox_is_valid, _bbox_reasons = validate_equation_bbox(region.bbox, canonical_image.width, canonical_image.height)
+        is_full_page = "SUSPICIOUSLY_LARGE_BBOX" in _bbox_reasons
+
+        if is_full_page:
+            # A region this large isn't a localized crop — it's (most of)
+            # the whole page, already covered by process_pdf()'s own
+            # primary OCR text. Re-running OCR on it here would be a
+            # duplicate, wasted pass over content we've already recognized
+            # once; record it as a candidate for a human to check against
+            # the primary text instead of pretending it's a useful crop.
+            full_page_candidates.append({
+                "bbox": list(region.bbox),
+                "region_type": region.region_type,
+                "note": "full-page candidate (bbox covers most of the page) — see the page's primary text, not re-OCR'd separately",
+            })
+            continue
+
+        if region.region_type in ("diagram", "table"):
+            visual_regions.append({
+                "bbox": list(region.bbox),
+                "region_type": region.region_type,
+                "review_required": True,
+                "note": "[Possible visual content — refer to original PDF for this page]",
+            })
+            continue
+
+        crop = canonical_image.crop(region.bbox)
+        result = recognize_region(region, crop)
+        if result.final_text:
+            refine_region_with_text(region, result.final_text, tesseract_confidence=None)
+        if region.region_type in ("mathematical_expression", "code"):
+            math_regions.append({
+                "bbox": list(region.bbox),
+                "region_type": region.region_type,
+                "text": _strip_known_watermarks(result.final_text),
+                "confidence": result.final_confidence,
+                "primary_engine": result.primary_engine,
+                "fallback_invoked": result.fallback_invoked,
+                "review_required": True,
+            })
+        elif region.region_type in ("diagram", "table"):  # refine_region_with_text can only promote INTO these from "unknown"
+            visual_regions.append({
+                "bbox": list(region.bbox),
+                "region_type": region.region_type,
+                "review_required": True,
+                "note": "[Possible visual content — refer to original PDF for this page]",
+            })
+
+    return math_regions, visual_regions, full_page_candidates
 
 
 def process_pdf(
@@ -772,10 +1494,20 @@ def process_pdf(
     only_page: Optional[int],
     dpi: int,
     preprocess: bool,
+    checkpoint_path: Optional[Path] = None,
 ) -> List[ContentRecord]:
+    """checkpoint_path, if given, makes this resumable: each page's record is
+    appended to it immediately after processing (not just returned/written
+    in bulk at the end), and any page already present there from a prior,
+    interrupted run is reused instead of reprocessed. None (the default) is
+    the original, non-checkpointed behavior — opt-in, not a default change."""
     page_count = get_pdf_page_count(pdf_path)
     pages = [only_page] if only_page else list(range(1, page_count + 1))
     records: List[ContentRecord] = []
+
+    already_done = _load_checkpoint(checkpoint_path)
+    if already_done:
+        logger.info(f"{pdf_path.name}: resuming, {len(already_done)} page(s) already in {checkpoint_path.name}")
 
     for page_number in pages:
         page_index = page_number - 1
@@ -783,9 +1515,16 @@ def process_pdf(
             logger.warning(f"{pdf_path.name}: page {page_number} out of range (1-{page_count}), skipping")
             continue
 
-        native_text = extract_pdf_native_text(pdf_path, page_index)
+        if page_number in already_done:
+            records.append(already_done[page_number])
+            continue
+
+        page_start = time.perf_counter()
+        native_text = _strip_known_watermarks(extract_pdf_native_text(pdf_path, page_index))
         if len(native_text) >= _MIN_NATIVE_TEXT_CHARS:
-            text = _light_clean(native_text)
+            text_uncorrected = _light_clean(native_text)
+            quality_label, quality_reasons = classify_page_quality(text_uncorrected, None)
+            text, spelling_corrections = apply_spelling_corrections(text_uncorrected)
             metadata = {
                 "ocr_engine": "pdf_text_layer",
                 "ocr_method": "pdf_text_layer",
@@ -796,6 +1535,15 @@ def process_pdf(
                 "psm": None,
                 "dpi": None,
                 "extraction_method": "native_text_layer",
+                "text_uncorrected": text_uncorrected,
+                "spelling_corrections": spelling_corrections,
+                "page_quality": quality_label,
+                "review_reasons": quality_reasons,
+                "visual_content_reference": None,
+                "math_regions": [],
+                "visual_regions": [],
+                "full_page_region_candidates": [],
+                "math_equation_blocks": [],
             }
         else:
             image = render_pdf_page(pdf_path, page_index, dpi=dpi)
@@ -807,27 +1555,75 @@ def process_pdf(
                     f"(confidence={result.confidence}, method={metadata['extraction_method']}) — flagged for QA review, not dropped"
                 )
 
+            # Opt-in (SAARTHI_REGION_ANALYSIS=1), additive-only, and
+            # SELECTIVE: only runs on pages the cheap, already-computed
+            # page_quality already flagged as NEEDS_REVIEW/POOR_EXTRACTION —
+            # a GOOD page has no identified problem for region analysis to
+            # help with, so paying its OCR-per-region cost there would be
+            # pure overhead (measured: region analysis added ~9% to total
+            # processing time when run unconditionally on all 17 pages of
+            # AnalogFilters.pdf — see docs/analogfilters-ocr-improvement-
+            # report.md §7; only 2 of 17 pages were GOOD, so this gate saves
+            # real time on any corpus with more straightforward pages).
+            # Reuses the existing, already-tested layout_detector/
+            # recognition_router tooling to find bbox-level mathematical/
+            # code regions (separately re-OCR'd, never overwriting the
+            # page's primary text above) and diagram/table regions (flagged
+            # for review, never guessed). Never required: a failure here
+            # falls back to the already-complete page-level result above.
+            if _env_flag("SAARTHI_REGION_ANALYSIS") and metadata["page_quality"] != "GOOD":
+                try:
+                    metadata["math_regions"], metadata["visual_regions"], metadata["full_page_region_candidates"] = (
+                        _analyze_page_regions(image, page_number)
+                    )
+                except Exception as exc:  # noqa: BLE001 — additive analysis must never break the primary page result
+                    logger.warning(f"{pdf_path.name} page {page_number}: region analysis failed, continuing without it: {exc}")
+                    metadata["math_regions"], metadata["visual_regions"], metadata["full_page_region_candidates"] = [], [], []
+
+            # Opt-in (SAARTHI_MATH_ANALYSIS=1), additive, separately
+            # configurable from SAARTHI_REGION_ANALYSIS above — a distinct,
+            # more targeted stage (per-equation-block, not per-band). Gated
+            # the same way (page_quality != "GOOD") AND requires ocr_lines
+            # (only populated when PaddleOCR won the page — Tesseract's
+            # OCRResult has no per-line bboxes to group; those pages keep
+            # relying on the coarser full_page_region_candidates above,
+            # an honest, documented limitation, not silently worked around).
+            # _group_math_lines_from_ocr_lines itself returns [] on a page
+            # with no math-candidate lines, so a page with text but no
+            # equations costs nothing extra beyond that cheap check.
+            if _env_flag("SAARTHI_MATH_ANALYSIS") and metadata["page_quality"] != "GOOD" and metadata.get("ocr_lines"):
+                try:
+                    metadata["math_equation_blocks"] = _analyze_math_equation_blocks(image, metadata["ocr_lines"])
+                except Exception as exc:  # noqa: BLE001 — additive analysis must never break the primary page result
+                    logger.warning(f"{pdf_path.name} page {page_number}: math equation-block analysis failed, continuing without it: {exc}")
+                    metadata["math_equation_blocks"] = []
+            else:
+                metadata["math_equation_blocks"] = []
+
+        metadata["processing_time_seconds"] = round(time.perf_counter() - page_start, 3)
+
         # Every page in range gets a record, even if OCR text came back empty —
         # low_confidence/ocr_confidence make that visible instead of silently
         # vanishing the page from the output.
-        records.append(
-            ContentRecord(
-                content_id=f"{meta['note_id']}_PAGE_{page_number:02d}",
-                content_type=ContentType.PDF_NOTE,
-                course=meta["course"],
-                topic=meta["topic"],
-                source=pdf_path.name,
-                source_id=meta["note_id"],
-                lecture=None,
-                page=page_number,
-                start_time=None,
-                end_time=None,
-                text=text,
-                processing_status=ProcessingStatus.PROCESSED,
-                qa_status=QAStatus.PENDING,
-                metadata=metadata,
-            )
+        record = ContentRecord(
+            content_id=f"{meta['note_id']}_PAGE_{page_number:02d}",
+            content_type=ContentType.PDF_NOTE,
+            course=meta["course"],
+            topic=meta["topic"],
+            source=pdf_path.name,
+            source_id=meta["note_id"],
+            lecture=None,
+            page=page_number,
+            start_time=None,
+            end_time=None,
+            text=text,
+            processing_status=ProcessingStatus.PROCESSED,
+            qa_status=QAStatus.PENDING,
+            metadata=metadata,
         )
+        records.append(record)
+        if checkpoint_path is not None:
+            _append_jsonl_record(record, checkpoint_path)
     return records
 
 
@@ -869,19 +1665,24 @@ def process_note_file(
     cli_course: Optional[str],
     cli_topic: Optional[str],
     cli_note_id: Optional[str],
+    resume: bool = False,
 ) -> dict:
     start = time.perf_counter()
     meta = resolve_metadata(source_path, cli_course, cli_topic, cli_note_id)
+    jsonl_path = output_dir / f"{source_path.stem}.jsonl"
     try:
         if source_path.suffix.lower() in PDF_EXTENSIONS:
-            records = process_pdf(source_path, meta, only_page, dpi, preprocess)
+            # checkpoint_path=jsonl_path itself: each page is appended there as
+            # it completes, so a crash mid-file leaves exactly the pages done
+            # so far — the next --resume run reads that same file and picks
+            # up where it left off, no separate checkpoint file to manage.
+            records = process_pdf(source_path, meta, only_page, dpi, preprocess, checkpoint_path=jsonl_path if resume else None)
         else:
             records = process_image(source_path, meta, preprocess, dpi)
 
         if not records:
             raise RuntimeError("No pages produced usable text")
 
-        jsonl_path = output_dir / f"{source_path.stem}.jsonl"
         write_jsonl(records, jsonl_path)
 
         duration = time.perf_counter() - start
@@ -925,6 +1726,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--page", type=int, default=None, help="Restrict processing to one page (1-indexed, PDF only).")
     parser.add_argument("--dpi", type=int, default=350, help="Render resolution for scanned PDF pages (300-400 recommended for handwriting).")
     parser.add_argument("--no-preprocess", action="store_true", help="Disable image preprocessing before OCR.")
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Checkpoint each PDF page as it completes and skip pages already in the output "
+             "file from a prior interrupted run — for large batches (e.g. an 800-page job) "
+             "where a crash partway through shouldn't mean reprocessing everything already done.",
+    )
     parser.add_argument("--course", default=None)
     parser.add_argument("--topic", default=None)
     parser.add_argument("--note-id", default=None)
@@ -965,6 +1772,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.course,
             args.topic,
             args.note_id,
+            resume=args.resume,
         )
         if result["status"] == "success":
             succeeded += 1

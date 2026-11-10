@@ -330,6 +330,145 @@ def test_process_pdf_never_skips_a_page_even_when_ocr_is_empty(tmp_path, monkeyp
     assert all(r.metadata["low_confidence"] is True for r in records)
 
 
+# --- page-level checkpointing (--resume) ------------------------------------
+
+def test_process_pdf_with_checkpoint_writes_each_page_incrementally(tmp_path, monkeypatch):
+    """Each page is appended to checkpoint_path as it completes, not only
+    returned/written in bulk at the end — so a crash after page 1 still
+    leaves page 1 on disk."""
+    import scripts.ingest_notes as ingest_notes
+    from scripts.ingest_notes import OCRResult
+    from scripts.schemas import read_jsonl
+
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"")
+    checkpoint_path = tmp_path / "out.jsonl"
+
+    monkeypatch.setattr(ingest_notes, "get_pdf_page_count", lambda path: 3)
+    monkeypatch.setattr(ingest_notes, "extract_pdf_native_text", lambda path, idx: "")
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda path, idx, dpi: object())
+
+    seen_pages = []
+
+    def _fake_ocr_image(image, preprocess=True):
+        return OCRResult(text=f"page text {len(seen_pages)}", confidence=0.9, engine="tesseract", preprocessing=None, psm=6)
+
+    monkeypatch.setattr(ingest_notes, "ocr_image", _fake_ocr_image)
+
+    meta = {"note_id": "N", "course": None, "topic": None}
+    ingest_notes.process_pdf(pdf_path, meta, only_page=None, dpi=350, preprocess=True, checkpoint_path=checkpoint_path)
+
+    on_disk = list(read_jsonl(checkpoint_path))
+    assert len(on_disk) == 3
+    assert [r.page for r in on_disk] == [1, 2, 3]
+
+
+def test_process_pdf_resumes_from_existing_checkpoint_without_reprocessing(tmp_path, monkeypatch):
+    """A page already present in checkpoint_path (from a prior, interrupted
+    run) is reused, not reprocessed — the core of --resume."""
+    import scripts.ingest_notes as ingest_notes
+    from scripts.ingest_notes import OCRResult
+    from scripts.schemas import ContentRecord, ContentType, ProcessingStatus, QAStatus, write_jsonl
+
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"")
+    checkpoint_path = tmp_path / "out.jsonl"
+
+    # Simulate a prior run that completed page 1 only.
+    write_jsonl(
+        [
+            ContentRecord(
+                content_id="N_PAGE_01", content_type=ContentType.PDF_NOTE, course=None, topic=None,
+                source="scanned.pdf", source_id="N", page=1, text="already done page 1",
+                processing_status=ProcessingStatus.PROCESSED, qa_status=QAStatus.PENDING,
+                metadata={"ocr_engine": "tesseract"},
+            )
+        ],
+        checkpoint_path,
+    )
+
+    monkeypatch.setattr(ingest_notes, "get_pdf_page_count", lambda path: 2)
+    monkeypatch.setattr(ingest_notes, "extract_pdf_native_text", lambda path, idx: "")
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda path, idx, dpi: object())
+
+    reprocessed_pages = []
+
+    def _fake_ocr_image(image, preprocess=True):
+        reprocessed_pages.append(image)
+        return OCRResult(text="freshly processed page 2", confidence=0.9, engine="tesseract", preprocessing=None, psm=6)
+
+    monkeypatch.setattr(ingest_notes, "ocr_image", _fake_ocr_image)
+
+    meta = {"note_id": "N", "course": None, "topic": None}
+    records = ingest_notes.process_pdf(pdf_path, meta, only_page=None, dpi=350, preprocess=True, checkpoint_path=checkpoint_path)
+
+    assert len(records) == 2
+    assert records[0].text == "already done page 1"  # reused, not reprocessed
+    assert records[1].text == "freshly processed page 2"
+    assert len(reprocessed_pages) == 1  # only page 2 actually went through OCR
+
+
+def test_process_note_file_resume_flag_enables_checkpointing(tmp_path, monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+    from scripts.ingest_notes import OCRResult
+
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"")
+    output_dir = tmp_path / "out"
+
+    monkeypatch.setattr(ingest_notes, "get_pdf_page_count", lambda path: 1)
+    monkeypatch.setattr(ingest_notes, "extract_pdf_native_text", lambda path, idx: "")
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda path, idx, dpi: object())
+    monkeypatch.setattr(
+        ingest_notes, "ocr_image",
+        lambda image, preprocess=True: OCRResult(text="x", confidence=0.9, engine="tesseract", preprocessing=None, psm=6),
+    )
+
+    captured_checkpoint = {}
+    real_process_pdf = ingest_notes.process_pdf
+
+    def _spy_process_pdf(*args, **kwargs):
+        captured_checkpoint["checkpoint_path"] = kwargs.get("checkpoint_path")
+        return real_process_pdf(*args, **kwargs)
+
+    monkeypatch.setattr(ingest_notes, "process_pdf", _spy_process_pdf)
+
+    ingest_notes.process_note_file(pdf_path, output_dir, None, 350, True, None, None, None, resume=True)
+
+    assert captured_checkpoint["checkpoint_path"] == output_dir / "scanned.jsonl"
+
+
+def test_process_note_file_default_does_not_checkpoint(tmp_path, monkeypatch):
+    """resume defaults to False — existing non-checkpointed behavior unchanged."""
+    import scripts.ingest_notes as ingest_notes
+    from scripts.ingest_notes import OCRResult
+
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"")
+    output_dir = tmp_path / "out"
+
+    monkeypatch.setattr(ingest_notes, "get_pdf_page_count", lambda path: 1)
+    monkeypatch.setattr(ingest_notes, "extract_pdf_native_text", lambda path, idx: "")
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda path, idx, dpi: object())
+    monkeypatch.setattr(
+        ingest_notes, "ocr_image",
+        lambda image, preprocess=True: OCRResult(text="x", confidence=0.9, engine="tesseract", preprocessing=None, psm=6),
+    )
+
+    captured_checkpoint = {}
+    real_process_pdf = ingest_notes.process_pdf
+
+    def _spy_process_pdf(*args, **kwargs):
+        captured_checkpoint["checkpoint_path"] = kwargs.get("checkpoint_path")
+        return real_process_pdf(*args, **kwargs)
+
+    monkeypatch.setattr(ingest_notes, "process_pdf", _spy_process_pdf)
+
+    ingest_notes.process_note_file(pdf_path, output_dir, None, 350, True, None, None, None)
+
+    assert captured_checkpoint["checkpoint_path"] is None
+
+
 def test_process_pdf_native_text_page_has_null_confidence(tmp_path):
     pdf_path = tmp_path / "notes_012.pdf"
     pdf_path.write_bytes(_make_simple_pdf("Sampling theorem states that x[n] converges"))
@@ -346,6 +485,58 @@ def test_process_pdf_native_text_page_has_null_confidence(tmp_path):
     assert records[0].metadata["confidence_tier"] == "native"
     assert records[0].metadata["preprocessing"] is None
     assert records[0].metadata["psm"] is None
+
+
+# --- scanner-app watermark detection -----------------------------------------
+# Regression tests for a real, measured bug found in this project's own
+# expanded raw-data set: 3 CamScanner-scanned PDFs (~39 pages) stamp
+# "Scanned with CamScanner" into every page's native text layer, which is
+# >= _MIN_NATIVE_TEXT_CHARS — the native-text-layer shortcut would have
+# stored that watermark as the page's entire content and never run OCR,
+# silently losing all the real handwritten notes.
+
+def test_strip_known_watermarks_removes_camscanner_stamp():
+    from scripts.ingest_notes import _strip_known_watermarks
+
+    assert _strip_known_watermarks("Scanned with CamScanner\n") == ""
+
+
+def test_strip_known_watermarks_preserves_real_text_around_a_watermark():
+    from scripts.ingest_notes import _strip_known_watermarks
+
+    assert _strip_known_watermarks("Scanned with CamScanner\nreal content here") == "real content here"
+
+
+def test_strip_known_watermarks_leaves_ordinary_text_untouched():
+    from scripts.ingest_notes import _strip_known_watermarks
+
+    assert _strip_known_watermarks("Sampling theorem states that x[n] converges") == "Sampling theorem states that x[n] converges"
+
+
+def test_process_pdf_camscanner_watermark_only_page_triggers_ocr_not_native_shortcut(tmp_path, monkeypatch):
+    """The exact real bug: a page whose only 'native text' is a CamScanner
+    watermark must be OCR'd, not treated as having real native text."""
+    import scripts.ingest_notes as ingest_notes
+    from scripts.ingest_notes import OCRResult
+
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(_make_simple_pdf("Scanned with CamScanner"))  # exactly what real CamScanner PDFs contain
+
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda path, idx, dpi: object())
+    ocr_was_called = []
+
+    def _fake_ocr_image(image, preprocess=True):
+        ocr_was_called.append(True)
+        return OCRResult(text="actual handwritten notes recovered by OCR", confidence=0.9, engine="tesseract", preprocessing=None, psm=6)
+
+    monkeypatch.setattr(ingest_notes, "ocr_image", _fake_ocr_image)
+
+    meta = {"note_id": "N", "course": None, "topic": None}
+    records = ingest_notes.process_pdf(pdf_path, meta, only_page=None, dpi=150, preprocess=False)
+
+    assert ocr_was_called  # OCR actually ran — not skipped by the watermark-fooled native-text shortcut
+    assert records[0].metadata["ocr_engine"] == "tesseract"  # not "pdf_text_layer"
+    assert records[0].text == "actual handwritten notes recovered by OCR"
 
 
 # --- confidence tiers (requirement: >=0.70 high, 0.50-0.70 moderate, <0.50 low) ---
@@ -539,6 +730,46 @@ def test_run_handwriting_ocr_rejects_unknown_backend():
         run_handwriting_ocr(Image.new("RGB", (20, 20)), "not_a_real_backend")
 
 
+# --- run_light_tesseract (single-attempt fallback, see recognition_router.py) ---
+
+def test_run_light_tesseract_single_attempt_only(monkeypatch, fake_pytesseract):
+    from scripts.ingest_notes import run_light_tesseract
+
+    calls = []
+    real_image_to_string = fake_pytesseract.image_to_string
+
+    def _counting_image_to_string(image, config=None):
+        calls.append(config)
+        return real_image_to_string(image, config=config)
+
+    monkeypatch.setattr(fake_pytesseract, "image_to_string", _counting_image_to_string)
+
+    result = run_light_tesseract(Image.new("RGB", (20, 20), color="white"))
+
+    assert len(calls) == 1  # not the 15-20 calls ocr_image()'s full sweep would make
+    assert "--psm 6" in calls[0]
+    assert result.text == "x[n] = sin(t)"
+    assert result.psm == 6
+    assert result.preprocessing is None
+
+
+def test_run_light_tesseract_raises_clear_error_when_pytesseract_missing(monkeypatch):
+    from scripts.ingest_notes import run_light_tesseract
+
+    monkeypatch.delitem(sys.modules, "pytesseract", raising=False)
+    real_import = __import__
+
+    def _blocked_import(name, *args, **kwargs):
+        if name == "pytesseract":
+            raise ImportError("No module named 'pytesseract' (simulated)")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", _blocked_import)
+
+    with pytest.raises(RuntimeError, match="pytesseract is not installed"):
+        run_light_tesseract(Image.new("RGB", (20, 20), color="white"))
+
+
 # --- PaddleOCR backend --------------------------------------------------------
 
 def test_run_handwriting_ocr_paddleocr_raises_clear_error_when_missing(monkeypatch):
@@ -672,3 +903,821 @@ def test_ocr_page_metadata_ocr_lines_is_none_for_tesseract():
     _, metadata = _ocr_page_metadata(result, dpi=350)
 
     assert metadata["ocr_lines"] is None
+
+
+# ---------------------------------------------------------------------------
+# Page-quality classification (independent of engine confidence) — AnalogFilters.pdf
+# comparison task: engine confidence was measured to NOT predict correctness
+# on this project's real handwritten math pages.
+# ---------------------------------------------------------------------------
+
+def test_classify_page_quality_empty_text_is_poor_extraction():
+    from scripts.ingest_notes import classify_page_quality
+
+    label, reasons = classify_page_quality("", confidence=0.95)
+
+    assert label == "POOR_EXTRACTION"
+    assert "EMPTY_OUTPUT" in reasons
+
+
+def test_classify_page_quality_near_empty_text_is_poor_extraction_even_with_high_confidence():
+    from scripts.ingest_notes import classify_page_quality
+
+    # Real case: AnalogFilters.pdf pages 10/11 — "pol eD" / "" after watermark
+    # stripping, but the engine reported confidence 0.86-0.94.
+    label, reasons = classify_page_quality("pol eD", confidence=0.94)
+
+    assert label == "POOR_EXTRACTION"
+    assert "NEAR_EMPTY_OUTPUT" in reasons
+
+
+def test_classify_page_quality_detects_suspicious_repetition():
+    from scripts.ingest_notes import classify_page_quality
+
+    label, reasons = classify_page_quality("ab" * 30, confidence=0.9)
+
+    assert label == "POOR_EXTRACTION"
+    assert "SUSPICIOUS_REPETITION" in reasons
+
+
+def test_classify_page_quality_detects_fragmented_garbage_text():
+    from scripts.ingest_notes import classify_page_quality
+
+    # Real case: AnalogFilters.pdf page 15 — short enough to also trip
+    # NEAR_EMPTY_OUTPUT, but genuinely fragmented/non-wordlike either way.
+    label, reasons = classify_page_quality("Serf\n\nsHeaee ee Rh PEE,", confidence=0.7362)
+
+    assert label == "POOR_EXTRACTION"
+    assert reasons  # flagged for some real reason, not silently passed as GOOD
+
+
+def test_classify_page_quality_flags_mathematical_content_for_review_not_as_poor():
+    from scripts.ingest_notes import classify_page_quality
+
+    text = (
+        "Recall the Butterworth lowpass filter magnitude squared response for order N "
+        "with cutoff frequency and pass band edge frequency. The relation is "
+        "H(omega)^2 = 1 / (1 + epsilon^2 * (omega/omega_p)^2N) for the standard case."
+    )
+    label, reasons = classify_page_quality(text, confidence=0.9)
+
+    assert "MATHEMATICAL_CONTENT" in reasons
+    assert label == "NEEDS_REVIEW"
+
+
+def test_classify_page_quality_good_plain_text_with_no_issues():
+    from scripts.ingest_notes import classify_page_quality
+
+    text = "This is a perfectly ordinary paragraph of recognizable English prose about filters."
+    label, reasons = classify_page_quality(text, confidence=0.9)
+
+    assert label == "GOOD"
+    assert reasons == []
+
+
+def test_classify_page_quality_missing_confidence_flags_but_does_not_force_poor():
+    from scripts.ingest_notes import classify_page_quality
+
+    text = "This is a perfectly ordinary paragraph of recognizable English prose about filters."
+    label, reasons = classify_page_quality(text, confidence=None)
+
+    assert "NO_CONFIDENCE_SCORE" in reasons
+    assert label == "NEEDS_REVIEW"
+
+
+# ---------------------------------------------------------------------------
+# Watermark removal from OCR'd text (not just the native PDF text layer) +
+# original-OCR-text preservation.
+# ---------------------------------------------------------------------------
+
+def test_ocr_page_metadata_strips_watermark_from_ocr_text():
+    from scripts.ingest_notes import OCRResult, _ocr_page_metadata
+
+    result = OCRResult(
+        text="pol eD\n\nScanned with CamScanner", confidence=0.86, engine="tesseract", preprocessing="original", psm=6,
+    )
+
+    text, metadata = _ocr_page_metadata(result, dpi=350)
+
+    assert "CamScanner" not in text
+    assert "pol eD" in text
+
+
+def test_ocr_page_metadata_preserves_raw_pre_clean_text_separately():
+    from scripts.ingest_notes import OCRResult, _ocr_page_metadata
+
+    raw = "pol eD\n\nScanned with CamScanner"
+    result = OCRResult(text=raw, confidence=0.86, engine="tesseract", preprocessing="original", psm=6)
+
+    _, metadata = _ocr_page_metadata(result, dpi=350)
+
+    assert metadata["ocr_text_raw"] == raw
+
+
+def test_ocr_page_metadata_near_empty_page_gets_visual_content_reference():
+    from scripts.ingest_notes import OCRResult, _ocr_page_metadata
+
+    result = OCRResult(text="pol eD", confidence=0.94, engine="tesseract", preprocessing="original", psm=6)
+
+    _, metadata = _ocr_page_metadata(result, dpi=350)
+
+    assert metadata["visual_content_reference"] is not None
+    assert "refer to original PDF" in metadata["visual_content_reference"]
+
+
+def test_ocr_page_metadata_good_page_has_no_visual_content_reference():
+    from scripts.ingest_notes import OCRResult, _ocr_page_metadata
+
+    result = OCRResult(
+        text="This is a perfectly ordinary paragraph of recognizable prose.",
+        confidence=0.9, engine="tesseract", preprocessing="original", psm=6,
+    )
+
+    _, metadata = _ocr_page_metadata(result, dpi=350)
+
+    assert metadata["visual_content_reference"] is None
+
+
+def test_ocr_page_metadata_includes_empty_region_lists_by_default():
+    from scripts.ingest_notes import OCRResult, _ocr_page_metadata
+
+    result = OCRResult(text="hello world", confidence=0.9, engine="tesseract", preprocessing="original", psm=6)
+
+    _, metadata = _ocr_page_metadata(result, dpi=350)
+
+    assert metadata["math_regions"] == []
+    assert metadata["visual_regions"] == []
+
+
+# ---------------------------------------------------------------------------
+# Opt-in region analysis (SAARTHI_REGION_ANALYSIS=1) — additive only, never
+# required, never overwrites the page's primary OCR text.
+# ---------------------------------------------------------------------------
+
+def test_region_analysis_disabled_by_default_in_process_pdf(monkeypatch, tmp_path):
+    import scripts.ingest_notes as ingest_notes
+
+    monkeypatch.delenv("SAARTHI_REGION_ANALYSIS", raising=False)
+
+    def _should_not_be_called(*args, **kwargs):
+        raise AssertionError("_analyze_page_regions must not run unless SAARTHI_REGION_ANALYSIS is set")
+
+    monkeypatch.setattr(ingest_notes, "_analyze_page_regions", _should_not_be_called)
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda *a, **k: Image.new("RGB", (20, 20), "white"))
+    monkeypatch.setattr(
+        ingest_notes, "ocr_image",
+        lambda *a, **k: ingest_notes.OCRResult(text="some text", confidence=0.9, engine="tesseract", preprocessing=None, psm=6),
+    )
+
+    pdf_bytes = _make_simple_pdf("")
+    pdf_path = tmp_path / "x.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    records = process_pdf(pdf_path, {"note_id": "X", "course": None, "topic": None}, only_page=1, dpi=300, preprocess=False)
+    assert records[0].metadata["math_regions"] == []
+
+
+def test_region_analysis_failure_degrades_gracefully(monkeypatch, tmp_path):
+    import scripts.ingest_notes as ingest_notes
+
+    monkeypatch.setenv("SAARTHI_REGION_ANALYSIS", "1")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("region analysis exploded")
+
+    monkeypatch.setattr(ingest_notes, "_analyze_page_regions", _boom)
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda *a, **k: Image.new("RGB", (20, 20), "white"))
+    monkeypatch.setattr(
+        ingest_notes, "ocr_image",
+        lambda *a, **k: ingest_notes.OCRResult(text="some text", confidence=0.9, engine="tesseract", preprocessing=None, psm=6),
+    )
+
+    pdf_bytes = _make_simple_pdf("")
+    pdf_path = tmp_path / "x.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    # Must not raise — a broken opt-in analysis must never break the primary page result.
+    records = process_pdf(pdf_path, {"note_id": "X", "course": None, "topic": None}, only_page=1, dpi=300, preprocess=False)
+    assert records[0].text == "some text"
+    assert records[0].metadata["math_regions"] == []
+    assert records[0].metadata["visual_regions"] == []
+
+
+def test_region_analysis_skipped_for_good_quality_pages_even_when_enabled(monkeypatch, tmp_path):
+    import scripts.ingest_notes as ingest_notes
+
+    monkeypatch.setenv("SAARTHI_REGION_ANALYSIS", "1")
+
+    def _should_not_be_called(*args, **kwargs):
+        raise AssertionError("_analyze_page_regions must be skipped for a GOOD-quality page")
+
+    monkeypatch.setattr(ingest_notes, "_analyze_page_regions", _should_not_be_called)
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda *a, **k: Image.new("RGB", (20, 20), "white"))
+    good_text = "This is a perfectly ordinary paragraph of recognizable English prose about electronic filters and their design."
+    monkeypatch.setattr(
+        ingest_notes, "ocr_image",
+        lambda *a, **k: ingest_notes.OCRResult(text=good_text, confidence=0.9, engine="tesseract", preprocessing=None, psm=6),
+    )
+
+    pdf_bytes = _make_simple_pdf("")
+    pdf_path = tmp_path / "x.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    records = process_pdf(pdf_path, {"note_id": "X", "course": None, "topic": None}, only_page=1, dpi=300, preprocess=False)
+    assert records[0].metadata["page_quality"] == "GOOD"
+    assert records[0].metadata["math_regions"] == []
+
+
+# ---------------------------------------------------------------------------
+# Conservative spelling correction.
+# ---------------------------------------------------------------------------
+
+def test_spelling_correction_applies_high_confidence_fixes():
+    from scripts.ingest_notes import apply_spelling_corrections
+
+    text = "Analog filters cheractristic with Butterwoith design at low freqeuency."
+    corrected, corrections = apply_spelling_corrections(text)
+
+    assert "characteristic" in corrected
+    assert "Butterworth" in corrected  # capitalization preserved
+    assert "frequency" in corrected
+    assert all(c["applied"] for c in corrections)
+
+
+def test_spelling_correction_flags_ambiguous_candidate_without_applying_it():
+    from scripts.ingest_notes import apply_spelling_corrections
+
+    text = "Reifoim the Conversion from H(s) to H(z)."
+    corrected, corrections = apply_spelling_corrections(text)
+
+    # Genuinely ambiguous (could be "Perform" or "Reform") — reported, not silently applied.
+    assert "Reifoim" in corrected
+    assert any(c["original"] == "Reifoim" and not c["applied"] for c in corrections)
+
+
+def test_spelling_correction_never_touches_unknown_tokens_including_variable_names():
+    from scripts.ingest_notes import apply_spelling_corrections
+
+    text = "H(s) and H(z), with Tn and Rc as variable names, and wp as a parameter."
+    corrected, corrections = apply_spelling_corrections(text)
+
+    assert corrected == text
+    assert corrections == []
+
+
+def test_ocr_page_metadata_preserves_three_text_tiers():
+    from scripts.ingest_notes import OCRResult, _ocr_page_metadata
+
+    raw = "Analog filters cheractristic.\n\nScanned with CamScanner"
+    result = OCRResult(text=raw, confidence=0.9, engine="tesseract", preprocessing="original", psm=6)
+
+    text, metadata = _ocr_page_metadata(result, dpi=350)
+
+    assert metadata["ocr_text_raw"] == raw  # untouched original
+    assert "CamScanner" not in metadata["text_uncorrected"]
+    assert "cheractristic" in metadata["text_uncorrected"]  # watermark gone, spelling not yet fixed
+    assert "characteristic" in text  # final text: watermark gone AND spelling fixed
+
+
+def test_ocr_page_metadata_strips_watermark_from_ocr_lines():
+    from scripts.ingest_notes import OCRResult, _ocr_page_metadata
+
+    result = OCRResult(
+        text="hello", confidence=0.9, engine="paddleocr", preprocessing=None, psm=None,
+        lines=[
+            {"text": "hello", "confidence": 0.9, "bbox": [0, 0, 5, 5]},
+            {"text": "Scanned with CamScanner", "confidence": 0.95, "bbox": [0, 10, 50, 15]},
+        ],
+    )
+
+    _, metadata = _ocr_page_metadata(result, dpi=None)
+
+    assert metadata["ocr_lines"][0]["text"] == "hello"
+    assert metadata["ocr_lines"][1]["text"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Region bounding-box correctness — a region whose bbox covers most of the
+# page is a full-page candidate, not a localized crop worth a duplicate OCR
+# call (AnalogFilters.pdf pages 8, 9, 13, 17 — _detect_text_bands returning
+# one giant band on dense handwriting with no blank-row gaps).
+# ---------------------------------------------------------------------------
+
+class _FakeRegion:
+    def __init__(self, bbox, region_type):
+        self.bbox = bbox
+        self.region_type = region_type
+
+
+class _FakeRegionResult:
+    def __init__(self, final_text, final_confidence, primary_engine="paddleocr", fallback_invoked=False):
+        self.final_text = final_text
+        self.final_confidence = final_confidence
+        self.primary_engine = primary_engine
+        self.fallback_invoked = fallback_invoked
+
+
+def test_analyze_page_regions_skips_full_page_bbox_without_a_duplicate_ocr_call(monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+    import scripts.layout_detector as layout_detector
+    import scripts.recognition_router as recognition_router
+
+    page_image = Image.new("L", (100, 100), "white")
+    full_page_region = _FakeRegion(bbox=(0, 0, 100, 100), region_type="unknown")  # 100% of the page
+
+    monkeypatch.setattr(layout_detector, "detect_regions", lambda image, page_number: ([full_page_region], page_image))
+
+    def _should_not_be_called(*args, **kwargs):
+        raise AssertionError("recognize_region must not run on a full-page-sized region — it duplicates the primary OCR pass")
+
+    monkeypatch.setattr(recognition_router, "recognize_region", _should_not_be_called)
+
+    math_regions, visual_regions, full_page_candidates = ingest_notes._analyze_page_regions(page_image, 1)
+
+    assert math_regions == []
+    assert visual_regions == []
+    assert len(full_page_candidates) == 1
+    assert full_page_candidates[0]["bbox"] == [0, 0, 100, 100]
+
+
+def test_analyze_page_regions_keeps_localized_math_region_and_strips_its_watermark(monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+    import scripts.layout_detector as layout_detector
+    import scripts.recognition_router as recognition_router
+
+    page_image = Image.new("L", (100, 100), "white")
+    small_region = _FakeRegion(bbox=(10, 10, 30, 30), region_type="mathematical_expression")  # 4% of the page
+
+    monkeypatch.setattr(layout_detector, "detect_regions", lambda image, page_number: ([small_region], page_image))
+    monkeypatch.setattr(layout_detector, "refine_region_with_text", lambda *a, **k: None)
+    monkeypatch.setattr(
+        recognition_router, "recognize_region",
+        lambda region, crop: _FakeRegionResult("x^2 + 1\nScanned with CamScanner", 0.8),
+    )
+
+    math_regions, visual_regions, full_page_candidates = ingest_notes._analyze_page_regions(page_image, 1)
+
+    assert full_page_candidates == []
+    assert len(math_regions) == 1
+    assert math_regions[0]["bbox"] == [10, 10, 30, 30]
+    assert "CamScanner" not in math_regions[0]["text"]
+    assert "x^2 + 1" in math_regions[0]["text"]
+    assert math_regions[0]["review_required"] is True
+
+
+def test_analyze_page_regions_diagram_region_never_gets_recognize_region_called(monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+    import scripts.layout_detector as layout_detector
+    import scripts.recognition_router as recognition_router
+
+    page_image = Image.new("L", (100, 100), "white")
+    diagram_region = _FakeRegion(bbox=(5, 5, 20, 20), region_type="diagram")  # small, but a diagram
+
+    monkeypatch.setattr(layout_detector, "detect_regions", lambda image, page_number: ([diagram_region], page_image))
+
+    def _should_not_be_called(*args, **kwargs):
+        raise AssertionError("diagram/table regions are never guessed via OCR — review-only")
+
+    monkeypatch.setattr(recognition_router, "recognize_region", _should_not_be_called)
+
+    math_regions, visual_regions, full_page_candidates = ingest_notes._analyze_page_regions(page_image, 1)
+
+    assert math_regions == []
+    assert len(visual_regions) == 1
+    assert visual_regions[0]["region_type"] == "diagram"
+    assert visual_regions[0]["review_required"] is True
+
+
+# ---------------------------------------------------------------------------
+# Page-quality classification — generalized checks (not specific to
+# AnalogFilters.pdf), per the task's "do not overfit thresholds" instruction.
+# ---------------------------------------------------------------------------
+
+def test_classify_page_quality_math_heavy_but_coherent_page_is_needs_review_not_poor():
+    from scripts.ingest_notes import classify_page_quality
+
+    text = (
+        "The Chebyshev filter response is defined by the equation "
+        "H(omega)^2 = 1 / (1 + epsilon^2 * T_N(omega/omega_p)^2) where T_N is "
+        "the Nth order Chebyshev polynomial and epsilon relates to the ripple."
+    )
+    label, reasons = classify_page_quality(text, confidence=0.85)
+
+    assert "MATHEMATICAL_CONTENT" in reasons
+    assert label == "NEEDS_REVIEW"
+
+
+def test_classify_page_quality_single_garbled_formula_line_flags_otherwise_good_page():
+    from scripts.ingest_notes import classify_page_quality
+
+    # Mirrors the real AnalogFilters.pdf page 1 case: a long, mostly-correct
+    # prose page with one badly garbled formula line buried inside it.
+    text = (
+        "Analog filters characteristic.\n"
+        "Recall the design steps for a digital filter from an analog prototype.\n"
+        "Preserving as much of the characteristics as possible throughout.\n"
+        "Lowpass Butterworth.\n"
+        "1HC2)^2=\n"
+        "1+E\n"
+        "N is the order of the filter and omega_c is the cutoff frequency."
+    )
+    label, reasons = classify_page_quality(text, confidence=0.9)
+
+    assert "MATHEMATICAL_CONTENT" in reasons
+    assert label == "NEEDS_REVIEW"
+
+
+def test_classify_page_quality_not_poor_merely_for_long_high_confidence_text():
+    from scripts.ingest_notes import classify_page_quality
+
+    text = "A long, perfectly ordinary paragraph of recognizable English prose. " * 5
+    label, reasons = classify_page_quality(text, confidence=0.99)
+
+    assert label == "GOOD"
+
+
+# ---------------------------------------------------------------------------
+# Math-specific OCR improvement: context-aware normalization, equation-block
+# grouping from existing OCR line bboxes, and math-quality classification.
+# ---------------------------------------------------------------------------
+
+def test_normalize_math_text_auto_applies_when_followed_by_bracket():
+    from scripts.ingest_notes import normalize_math_text
+
+    normalized, corrections = normalize_math_text("N=10g[1182-1]")
+
+    assert normalized == "N=log[1182-1]"
+    assert corrections == [{"original": "10g", "suggested": "log", "confidence": 0.9, "applied": True}]
+
+
+def test_normalize_math_text_flags_low_confidence_without_applying():
+    from scripts.ingest_notes import normalize_math_text
+
+    normalized, corrections = normalize_math_text("loy (g/t)")
+
+    assert "loy" in normalized  # left untouched
+    assert corrections and all(not c["applied"] for c in corrections)
+
+
+def test_normalize_math_text_never_touches_unrelated_tokens():
+    from scripts.ingest_notes import normalize_math_text
+
+    text = "H(s) and omega_p and Rc are unrelated variable names."
+    normalized, corrections = normalize_math_text(text)
+
+    assert normalized == text
+    assert corrections == []
+
+
+def test_group_math_lines_returns_empty_for_no_candidates():
+    from scripts.ingest_notes import _group_math_lines_from_ocr_lines
+
+    lines = [{"text": "This is ordinary prose with no equations at all.", "confidence": 0.9, "bbox": [0, 0, 500, 50]}]
+    assert _group_math_lines_from_ocr_lines(lines) == []
+    assert _group_math_lines_from_ocr_lines(None) == []
+    assert _group_math_lines_from_ocr_lines([]) == []
+
+
+def test_group_math_lines_groups_adjacent_lines_into_one_block():
+    from scripts.ingest_notes import _group_math_lines_from_ocr_lines
+
+    lines = [
+        {"text": "N=10g[1182-1]", "confidence": 0.8, "bbox": [100, 100, 500, 150]},
+        {"text": "= log (109-1)", "confidence": 0.7, "bbox": [100, 160, 500, 210]},  # gap=10px, same block
+    ]
+    blocks = _group_math_lines_from_ocr_lines(lines)
+
+    assert len(blocks) == 1
+    assert blocks[0]["bbox"] == (100, 100, 500, 210)
+    assert "N=10g[1182-1]" in blocks[0]["text"]
+    assert "log (109-1)" in blocks[0]["text"]
+
+
+def test_group_math_lines_splits_distant_lines_into_separate_blocks():
+    from scripts.ingest_notes import _group_math_lines_from_ocr_lines
+
+    lines = [
+        {"text": "N=10g[1182-1]", "confidence": 0.8, "bbox": [100, 100, 500, 150]},
+        {"text": "= log (109-1)", "confidence": 0.7, "bbox": [100, 2000, 500, 2050]},  # far below, separate block
+    ]
+    blocks = _group_math_lines_from_ocr_lines(lines)
+
+    assert len(blocks) == 2
+
+
+def test_classify_math_block_quality_not_detected_when_both_empty():
+    from scripts.ingest_notes import _classify_math_block_quality
+
+    label, reasons = _classify_math_block_quality("", "")
+
+    assert label == "NOT_DETECTED"
+    assert "NO_TEXT_RECOGNIZED" in reasons
+
+
+def test_classify_math_block_quality_flags_hypothesis_disagreement():
+    from scripts.ingest_notes import _classify_math_block_quality
+
+    label, reasons = _classify_math_block_quality(
+        "a long and otherwise perfectly readable equation line written here",
+        "a completely different and unrelated second opinion text entirely",
+    )
+
+    assert "HYPOTHESIS_DISAGREEMENT" in reasons
+    assert label == "NEEDS_REVIEW"
+
+
+def test_classify_math_block_quality_agreeing_hypotheses_stay_good():
+    from scripts.ingest_notes import _classify_math_block_quality
+
+    text = "a long and otherwise perfectly readable equation line written here"
+    label, reasons = _classify_math_block_quality(text, text)
+
+    assert label == "GOOD"
+
+
+# ---------------------------------------------------------------------------
+# Refinement: distinguishing empty/incomplete hypotheses from genuine
+# disagreement (docs/analogfilters-latest-math-ocr-evaluation.md §7 finding:
+# a 90% raw-disagreement rate was uninformative because it conflated these).
+# ---------------------------------------------------------------------------
+
+def test_classify_math_block_quality_second_opinion_empty_is_not_disagreement():
+    from scripts.ingest_notes import _classify_math_block_quality
+
+    label, reasons = _classify_math_block_quality("a perfectly fine primary equation line here", "")
+
+    assert "SECOND_OPINION_EMPTY" in reasons
+    assert "HYPOTHESIS_DISAGREEMENT" not in reasons
+    assert label == "GOOD"  # informational only — does not by itself demote an otherwise-clean block
+
+
+def test_classify_math_block_quality_primary_empty_is_severe():
+    from scripts.ingest_notes import _classify_math_block_quality
+
+    label, reasons = _classify_math_block_quality("", "the second opinion actually found real content here")
+
+    assert "PRIMARY_EMPTY" in reasons
+    assert label == "POOR_EXTRACTION"  # the primary is what reaches the page — this is the concerning direction
+
+
+def test_classify_math_block_quality_both_empty_is_not_detected():
+    from scripts.ingest_notes import _classify_math_block_quality
+
+    label, reasons = _classify_math_block_quality("", "")
+
+    assert label == "NOT_DETECTED"
+    assert reasons == ["NO_TEXT_RECOGNIZED"]
+
+
+def test_classify_math_block_quality_second_opinion_incomplete_vs_primary():
+    from scripts.ingest_notes import _classify_math_block_quality
+
+    label, reasons = _classify_math_block_quality(
+        "a long and otherwise perfectly readable full equation line here", "short bit",
+    )
+
+    assert "SECOND_OPINION_INCOMPLETE" in reasons
+    assert "HYPOTHESIS_DISAGREEMENT" not in reasons
+    assert label == "NEEDS_REVIEW"
+
+
+def test_classify_math_block_quality_primary_incomplete_vs_second_opinion():
+    from scripts.ingest_notes import _classify_math_block_quality
+
+    label, reasons = _classify_math_block_quality(
+        "short bit", "a long and otherwise perfectly readable full equation line here",
+    )
+
+    assert "PRIMARY_INCOMPLETE" in reasons
+    assert "HYPOTHESIS_DISAGREEMENT" not in reasons
+    assert label == "NEEDS_REVIEW"
+
+
+def test_classify_math_block_quality_never_prefers_longer_hypothesis_as_correct():
+    """Incompleteness is reported, never resolved by silently picking one side."""
+    from scripts.ingest_notes import _classify_math_block_quality
+
+    label, reasons = _classify_math_block_quality(
+        "short bit", "a long and otherwise perfectly readable full equation line here",
+    )
+    # The function returns only a label + reasons — there is no "winning text" output at all.
+    assert isinstance(label, str) and isinstance(reasons, list)
+
+
+# ---------------------------------------------------------------------------
+# Equation grouping safety: max block height / line count, to stop a long
+# uninterrupted run of math-dense lines from merging separate derivation
+# steps (docs/analogfilters-latest-math-ocr-evaluation.md §4 finding: page
+# 14's 11-line, 1894px block covering what used to be 3-4 separate bands).
+# ---------------------------------------------------------------------------
+
+def test_group_math_lines_splits_on_max_line_count(monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+
+    monkeypatch.setattr(ingest_notes, "_MATH_BLOCK_MAX_LINES", 3)
+    lines = [
+        {"text": f"N={i}0g[{i}]", "confidence": 0.8, "bbox": [100, 100 + i * 60, 500, 150 + i * 60]}
+        for i in range(6)  # 6 math-dense lines, each close enough to the next to normally merge
+    ]
+    blocks = ingest_notes._group_math_lines_from_ocr_lines(lines)
+
+    assert len(blocks) >= 2
+    assert all(len(b["text"].split("\n")) <= 3 for b in blocks)
+
+
+def test_group_math_lines_splits_on_max_height(monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+
+    monkeypatch.setattr(ingest_notes, "_MATH_BLOCK_MAX_HEIGHT_PX", 200)
+    lines = [
+        {"text": "N=10g[1]", "confidence": 0.8, "bbox": [100, 100, 500, 150]},
+        {"text": "N=10g[2]", "confidence": 0.8, "bbox": [100, 170, 500, 220]},
+        {"text": "N=10g[3]", "confidence": 0.8, "bbox": [100, 240, 500, 320]},  # pushes total height (320-100=220) over 200
+    ]
+    blocks = ingest_notes._group_math_lines_from_ocr_lines(lines)
+
+    assert len(blocks) >= 2
+
+
+def test_group_math_lines_does_not_split_a_short_continuous_equation():
+    """A normal few-line formula must not be needlessly split."""
+    from scripts.ingest_notes import _group_math_lines_from_ocr_lines
+
+    lines = [
+        {"text": "N=10g[1182-1]", "confidence": 0.8, "bbox": [100, 100, 500, 150]},
+        {"text": "= log (109-1)", "confidence": 0.7, "bbox": [100, 160, 500, 210]},
+        {"text": "= 6.64.", "confidence": 0.7, "bbox": [100, 220, 500, 270]},
+    ]
+    blocks = _group_math_lines_from_ocr_lines(lines)
+
+    assert len(blocks) == 1
+    assert len(blocks[0]["text"].split("\n")) == 3
+
+
+def test_group_math_lines_preserves_original_top_to_bottom_order():
+    from scripts.ingest_notes import _group_math_lines_from_ocr_lines
+
+    lines = [
+        {"text": "N=10g[2]", "confidence": 0.8, "bbox": [100, 300, 500, 350]},
+        {"text": "N=10g[1]", "confidence": 0.8, "bbox": [100, 100, 500, 150]},
+    ]
+    blocks = _group_math_lines_from_ocr_lines(lines)
+
+    assert len(blocks) == 1
+    assert blocks[0]["text"].split("\n") == ["N=10g[1]", "N=10g[2]"]
+
+
+# ---------------------------------------------------------------------------
+# Reusable bounding-box safety validation (shared between
+# _analyze_page_regions and _analyze_math_equation_blocks).
+# ---------------------------------------------------------------------------
+
+def test_validate_equation_bbox_accepts_a_normal_localized_region():
+    from scripts.ingest_notes import validate_equation_bbox
+
+    is_valid, reasons = validate_equation_bbox((10, 10, 100, 100), 1000, 1000)
+
+    assert is_valid is True
+    assert reasons == []
+
+
+def test_validate_equation_bbox_flags_suspiciously_large_region():
+    from scripts.ingest_notes import validate_equation_bbox
+
+    is_valid, reasons = validate_equation_bbox((0, 0, 900, 900), 1000, 1000)
+
+    assert is_valid is True  # structurally fine — flagged, not rejected
+    assert "SUSPICIOUSLY_LARGE_BBOX" in reasons
+
+
+def test_validate_equation_bbox_rejects_out_of_bounds_coordinates():
+    from scripts.ingest_notes import validate_equation_bbox
+
+    is_valid, reasons = validate_equation_bbox((10, 10, 2000, 100), 1000, 1000)
+
+    assert is_valid is False
+    assert "OUT_OF_BOUNDS" in reasons
+
+
+def test_validate_equation_bbox_rejects_degenerate_coordinates():
+    from scripts.ingest_notes import validate_equation_bbox
+
+    is_valid, reasons = validate_equation_bbox((100, 100, 100, 200), 1000, 1000)  # x0 == x1
+
+    assert is_valid is False
+    assert "OUT_OF_BOUNDS" in reasons
+
+
+def test_analyze_math_equation_blocks_flags_suspiciously_large_block_without_discarding_it(monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+
+    monkeypatch.setattr(ingest_notes, "_paddleocr_ocr_image", lambda image: ("log(x) + 1", 0.9, []))
+    monkeypatch.setattr(ingest_notes, "_MATH_BLOCK_CROP_PADDING_PX", 0)
+
+    # A block spanning almost the whole 100x100 image.
+    lines = [{"text": "10g(x) + 1", "confidence": 0.8, "bbox": [2, 2, 98, 98]}]
+    result = ingest_notes._analyze_math_equation_blocks(Image.new("L", (100, 100), "white"), lines)
+
+    assert len(result) == 1
+    assert "SUSPICIOUSLY_LARGE_BBOX" in result[0]["math_quality_reasons"]
+    assert result[0]["ocr_text_raw"] == "10g(x) + 1"  # OCR output preserved, never discarded
+    assert result[0]["math_quality"] == "NEEDS_REVIEW"  # bumped from what would otherwise be GOOD
+
+
+def test_analyze_math_equation_blocks_returns_empty_without_math_lines(monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+
+    def _should_not_be_called(*args, **kwargs):
+        raise AssertionError("no OCR call should happen when there are no math-candidate lines")
+
+    monkeypatch.setattr(ingest_notes, "_paddleocr_ocr_image", _should_not_be_called)
+
+    lines = [{"text": "Ordinary prose with no equations.", "confidence": 0.9, "bbox": [0, 0, 500, 50]}]
+    result = ingest_notes._analyze_math_equation_blocks(Image.new("L", (600, 600), "white"), lines)
+
+    assert result == []
+
+
+def test_analyze_math_equation_blocks_preserves_both_hypotheses_and_watermark_strips(monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+
+    monkeypatch.setattr(
+        ingest_notes, "_paddleocr_ocr_image",
+        lambda image: ("log(x) + 1\nScanned with CamScanner", 0.9, []),
+    )
+
+    lines = [{"text": "10g(x) + 1", "confidence": 0.8, "bbox": [50, 50, 300, 100]}]
+    result = ingest_notes._analyze_math_equation_blocks(Image.new("L", (600, 600), "white"), lines)
+
+    assert len(result) == 1
+    block = result[0]
+    assert block["ocr_text_raw"] == "10g(x) + 1"  # untouched primary text preserved
+    assert block["normalized_text"] == "log(x) + 1"  # context-aware correction applied
+    assert "CamScanner" not in block["second_opinion_text"]  # watermark stripped from the second opinion too
+    assert block["latex"] is None
+    assert block["review_required"] is True
+
+
+def test_analyze_math_equation_blocks_degrades_gracefully_when_second_opinion_fails(monkeypatch):
+    import scripts.ingest_notes as ingest_notes
+
+    def _boom(image):
+        raise RuntimeError("OCR exploded")
+
+    monkeypatch.setattr(ingest_notes, "_paddleocr_ocr_image", _boom)
+
+    lines = [{"text": "10g(x) + 1", "confidence": 0.8, "bbox": [50, 50, 300, 100]}]
+    result = ingest_notes._analyze_math_equation_blocks(Image.new("L", (600, 600), "white"), lines)
+
+    assert len(result) == 1
+    assert result[0]["ocr_text_raw"] == "10g(x) + 1"
+    assert result[0]["second_opinion_text"] == ""
+
+
+def test_math_analysis_disabled_by_default_in_process_pdf(monkeypatch, tmp_path):
+    import scripts.ingest_notes as ingest_notes
+
+    monkeypatch.delenv("SAARTHI_MATH_ANALYSIS", raising=False)
+
+    def _should_not_be_called(*args, **kwargs):
+        raise AssertionError("_analyze_math_equation_blocks must not run unless SAARTHI_MATH_ANALYSIS is set")
+
+    monkeypatch.setattr(ingest_notes, "_analyze_math_equation_blocks", _should_not_be_called)
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda *a, **k: Image.new("RGB", (20, 20), "white"))
+    monkeypatch.setattr(
+        ingest_notes, "ocr_image",
+        lambda *a, **k: ingest_notes.OCRResult(
+            text="N=10g(x) - a poorly recognized equation line here", confidence=0.6, engine="paddleocr", preprocessing=None, psm=None,
+            lines=[{"text": "N=10g(x)", "confidence": 0.6, "bbox": [0, 0, 100, 20]}],
+        ),
+    )
+
+    pdf_bytes = _make_simple_pdf("")
+    pdf_path = tmp_path / "x.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    records = process_pdf(pdf_path, {"note_id": "X", "course": None, "topic": None}, only_page=1, dpi=300, preprocess=False)
+    assert records[0].metadata["math_equation_blocks"] == []
+
+
+def test_math_analysis_skipped_without_ocr_lines_even_when_enabled(monkeypatch, tmp_path):
+    import scripts.ingest_notes as ingest_notes
+
+    monkeypatch.setenv("SAARTHI_MATH_ANALYSIS", "1")
+
+    def _should_not_be_called(*args, **kwargs):
+        raise AssertionError("must not run without ocr_lines (e.g. a Tesseract-won page)")
+
+    monkeypatch.setattr(ingest_notes, "_analyze_math_equation_blocks", _should_not_be_called)
+    monkeypatch.setattr(ingest_notes, "render_pdf_page", lambda *a, **k: Image.new("RGB", (20, 20), "white"))
+    monkeypatch.setattr(
+        ingest_notes, "ocr_image",
+        lambda *a, **k: ingest_notes.OCRResult(text="a poorly recognized line here", confidence=0.4, engine="tesseract", preprocessing=None, psm=6),
+    )
+
+    pdf_bytes = _make_simple_pdf("")
+    pdf_path = tmp_path / "x.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    records = process_pdf(pdf_path, {"note_id": "X", "course": None, "topic": None}, only_page=1, dpi=300, preprocess=False)
+    assert records[0].metadata["math_equation_blocks"] == []

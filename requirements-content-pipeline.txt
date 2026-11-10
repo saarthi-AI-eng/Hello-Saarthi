@@ -54,13 +54,39 @@
 #     which are a genuinely heavy install (paddleocr depends on paddlex,
 #     which pulls in modelscope, aistudio-sdk, pandas, and more — expect
 #     ~1-2GB and several minutes). Install separately, deliberately not
-#     bundled in this file:
-#       pip install "paddlepaddle>=3.1" "paddleocr>=3.0"
+#     bundled in this file.
+#
+#     On a machine with an NVIDIA GPU (measured ~24x faster than CPU on
+#     this project's RTX 4060, identical output — see
+#     docs/ocr-benchmark-final-report.md), install the matching GPU wheel
+#     from PaddlePaddle's own index instead of plain `paddlepaddle` (PyPI's
+#     `paddlepaddle-gpu` is stale and does not support recent Python):
+#       pip install "paddleocr>=3.0"
+#       pip install https://paddle-whl.cdn.bcebos.com/stable/cu126/paddlepaddle-gpu/paddlepaddle_gpu-3.3.1-cp313-cp313-win_amd64.whl
+#     (pick the cuXXX/cpXXX path matching your CUDA driver and Python
+#     version from https://www.paddlepaddle.org.cn/packages/stable/ — the
+#     GPU wheel also runs CPU-only fine, so one install covers both; the
+#     pipeline auto-detects GPU availability at runtime (via paddle itself
+#     — never hardcoded to any specific GPU) and only uses it when a
+#     CUDA-enabled PaddlePaddle + a visible GPU are both actually present,
+#     falling back to CPU automatically otherwise. Force a specific device
+#     with SAARTHI_PADDLEOCR_DEVICE=cpu|gpu|gpu:N. CPU-only machines should
+#     instead install plain `pip install "paddlepaddle>=3.1"`.
 #     First use downloads detection+recognition models (~tens of MB,
 #     cached under ~/.paddlex/official_models/) — never during unit tests,
 #     only when SAARTHI_HANDWRITING_OCR=paddleocr actually runs.
 #     See docs/content-management.md for configuration (model/device/
 #     mkldnn env vars) and a known CPU-inference crash workaround.
+#
+# Mathematical-expression recognition (PP-FormulaNet / UniMERNet, via the
+# already-installed paddlex): also needs `ftfy` (small, pure Python), which
+# paddlex's formula-recognition postprocessing imports but doesn't declare
+# as its own dependency. Only needed if you actually call
+# paddlex.create_model() for a formula_recognition model — see
+# docs/ocr-architecture.md for why neither is wired into the default
+# pipeline (PP-FormulaNet-S was tested and failed on this project's real
+# handwritten formulas; UniMERNet's checkpoint download didn't complete).
+#   pip install ftfy
 
 faster-whisper>=1.0.0
 pytesseract>=0.3.10

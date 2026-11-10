@@ -58,6 +58,7 @@ data/evaluation/*.json
 knowledge_base/unified/
 logs/*.json
 !logs/.gitkeep
+docs/GITHUB_READY_FILE_MANIFEST.md
 
 # Generated / runtime
 kb_status.json
