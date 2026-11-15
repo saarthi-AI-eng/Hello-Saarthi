@@ -139,9 +139,11 @@
     font-weight: 600;
     margin: 0 0 0.25rem 0;
     letter-spacing: -0.02em;
+    color: inherit; /* the global h1 colour made the title dark on the dark banner */
 }
 
 .cd-cr-banner-content p {
+    color: inherit;
     font-size: 1.1rem;
     opacity: 0.9;
     margin: 0;
@@ -299,6 +301,33 @@
     font-size: 0.8rem;
     color: var(--text-muted);
     margin: 0;
+}
+
+.cd-feed-open {
+    cursor: pointer;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    transition: background 0.15s;
+}
+
+.cd-feed-open:hover {
+    background: var(--surface-2);
+}
+
+.cd-feed-open:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+}
+
+/* The feed shows a preview; the full text is in the opened post. */
+.cd-feed-text-clamp {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.cd-post-dialog .cd-modal-header .cd-feed-header {
+    padding: 0;
 }
 
 .cd-feed-body {
@@ -562,6 +591,120 @@
     gap: 0.75rem;
     padding: 1.25rem 1.5rem;
     border-top: 1px solid var(--border);
+}
+
+/* Invite Students dialog: these classes were used but never defined */
+.cd-modal-wide {
+    max-width: 640px;
+}
+
+.cd-modal-wide .cd-modal-header h2 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.cd-invite-section-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
+}
+
+.cd-invite-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.cd-invite-divider::before,
+.cd-invite-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.cd-csv-upload-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    border: 1px dashed var(--gray-400);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.cd-csv-upload-btn:hover {
+    background: var(--surface-2);
+    border-color: var(--primary);
+}
+
+.cd-csv-results,
+.cd-invited-list {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.cd-csv-results-header {
+    padding: 0.5rem 0.75rem;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.cd-csv-table {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.cd-csv-row,
+.cd-invited-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.cd-csv-row + .cd-csv-row,
+.cd-invited-row + .cd-invited-row {
+    border-top: 1px solid var(--border);
+}
+
+.cd-csv-row-error {
+    background: var(--error-light);
+}
+
+.cd-csv-email {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.cd-csv-err {
+    font-size: 0.75rem;
+    color: var(--error);
+}
+
+.cd-invited-tag {
+    margin-left: auto;
+    padding: 0.125rem 0.5rem;
+    border-radius: var(--radius-full);
+    background: var(--surface-3);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--text-secondary);
 }
 
 /* Responsive */
@@ -840,6 +983,257 @@
     min-height: 300px;
     border: none;
     flex: 1;
+}
+
+/* Assignment dialog and grading */
+.cd-assignment-dialog .cd-modal-header h2 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.15rem;
+}
+
+.cd-assignment-meta {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+}
+
+.cd-assignment-desc {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+}
+
+.cd-assignment-error {
+    font-size: 0.8125rem;
+    color: var(--error);
+}
+
+.cd-assignment-work {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.625rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+}
+
+.cd-assignment-work-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    width: 100%;
+}
+
+.cd-assignment-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8125rem;
+    color: var(--primary);
+    overflow-wrap: anywhere;
+}
+
+.cd-status {
+    flex-shrink: 0;
+    padding: 0.125rem 0.55rem;
+    border-radius: var(--radius-full);
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.cd-status-assigned {
+    background: var(--surface-3);
+    color: var(--text-secondary);
+}
+
+.cd-status-submitted {
+    background: var(--success-light);
+    color: var(--success-dark);
+}
+
+.cd-status-graded {
+    background: var(--primary);
+    color: #fff;
+}
+
+.cd-status-missing {
+    background: var(--error-light);
+    color: var(--error-dark);
+}
+
+.cd-work-files {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.cd-work-files li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.375rem 0.625rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-1);
+}
+
+.cd-work-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.cd-work-closed {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8125rem;
+    color: var(--error-dark);
+}
+
+.cd-checkbox-field {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.cd-checkbox-field input {
+    margin-top: 0.2rem;
+}
+
+.cd-checkbox-field small {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.cd-grade-table {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+    overflow: hidden;
+}
+
+.cd-grade-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.625rem 0.75rem;
+}
+
+.cd-grade-row + .cd-grade-row {
+    border-top: 1px solid var(--border);
+}
+
+.cd-grade-student {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.cd-grade-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.cd-grade-input {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-shrink: 0;
+}
+
+.cd-grade-input .input {
+    width: 4.5rem;
+    padding: 0.35rem 0.5rem;
+}
+
+.cd-mywork-row {
+    width: 100%;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+}
+
+.cd-mywork-row:hover {
+    background: var(--surface-2);
+}
+
+@media (max-width: 560px) {
+    .cd-grade-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+.cd-feed-attachment {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    max-width: 260px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--surface-2);
+    color: var(--primary);
+    text-decoration: none;
+    transition: border-color 0.15s;
+}
+
+.cd-feed-attachment:hover {
+    border-color: var(--primary);
+}
+
+.cd-feed-attachment-img {
+    display: block;
+    width: 100%;
+    max-height: 180px;
+    object-fit: cover;
+    background: var(--surface-3);
+}
+
+.cd-feed-attachment-name {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.82rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cd-doc-view-image {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    margin: auto;
+    padding: 1rem;
+    object-fit: contain;
 }
 
 .cd-doc-view-fallback {

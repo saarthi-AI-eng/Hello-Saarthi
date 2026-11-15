@@ -11,15 +11,6 @@ import EmptyState from '../components/EmptyState';
 import './Dashboard.css';
 
 
-function getUrgencyInfo(urgency: string) {
-    switch (urgency) {
-        case 'high': return { color: '#C86F7A', bg: 'rgba(200, 111, 122, 0.14)', label: 'Due Soon' };
-        case 'medium': return { color: '#B59A63', bg: 'rgba(181, 154, 99, 0.14)', label: 'This Week' };
-        case 'low': return { color: '#5FA89C', bg: 'rgba(95, 168, 156, 0.14)', label: 'Upcoming' };
-        default: return { color: '#94A3B8', bg: 'rgba(148, 163, 184, 0.14)', label: '' };
-    }
-}
-
 interface StudyPlanDay { day: string; sessions: string[]; totalHours: number; }
 interface StudyPlan { weekPlan: StudyPlanDay[]; summary: string; priorityTopics: string[]; generatedAt: string; }
 
@@ -35,7 +26,6 @@ export default function DashboardPage() {
     const [planLoading, setPlanLoading] = useState(false);
     const [planExpanded, setPlanExpanded] = useState(false);
     const [totalCourses, setTotalCourses] = useState(0);
-
     useEffect(() => {
         let cancelled = false;
         (async () => {

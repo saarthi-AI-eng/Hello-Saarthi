@@ -14,6 +14,7 @@ interface User {
 interface AuthState {
     user: User | null;
     token: string | null;
+    refreshToken: string | null;
     isAuthenticated: boolean;
     isLoading: boolean;
     isRestoring: boolean;
@@ -21,11 +22,15 @@ interface AuthState {
     signup: (data: { name: string; email: string; password: string; confirmPassword: string; institute?: string; role?: string }) => Promise<void>;
     logout: () => Promise<void>;
     restoreSession: () => Promise<void>;
+    refreshSession: () => Promise<boolean>;
     setUser: (user: User) => void;
     clearSession: () => void;
 }
 
 const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? (typeof window !== 'undefined' ? `http://${window.location.hostname}:8000/api` : 'http://localhost:8000/api') : '/api');
+
+// The backend rotates refresh tokens (each one works once), so concurrent 401s must share one refresh.
+let refreshInFlight: Promise<boolean> | null = null;
 
 /** Backend returns { success, error: { code, message, details } }. Extract message string. */
 function getErrorMessage(data: any, fallback: string): string {
@@ -44,6 +49,7 @@ export const useAuthStore = create<AuthState>()(
         (set, get) => ({
             user: null,
             token: null,
+            refreshToken: null,
             isAuthenticated: false,
             isLoading: false,
             isRestoring: true,
@@ -65,7 +71,7 @@ export const useAuthStore = create<AuthState>()(
                     const userData = data.data || data;
                     const user = userData.user;
                     if (user && !user.name) user.name = user.fullName || user.full_name || 'User';
-                    set({ user, token: userData.token, isAuthenticated: true, isLoading: false });
+                    set({ user, token: userData.token, refreshToken: userData.refresh_token ?? null, isAuthenticated: true, isLoading: false });
                 } catch (error) {
                     set({ isLoading: false });
                     throw error;
@@ -106,7 +112,7 @@ export const useAuthStore = create<AuthState>()(
                         const requestedRole = formData.role === 'teacher' ? 'teacher' : 'student';
                         user.role = (user.role === 'teacher' || user.role === 'admin') ? user.role : requestedRole;
                     }
-                    set({ user, token: userData.token, isAuthenticated: true, isLoading: false });
+                    set({ user, token: userData.token, refreshToken: userData.refresh_token ?? null, isAuthenticated: true, isLoading: false });
                 } catch (error) {
                     set({ isLoading: false });
                     throw error;
@@ -120,20 +126,32 @@ export const useAuthStore = create<AuthState>()(
                     if (token) headers['Authorization'] = `Bearer ${token}`;
                     await fetch(`${API_URL}/auth/logout`, { method: 'POST', headers });
                 } finally {
-                    set({ user: null, token: null, isAuthenticated: false });
+                    set({ user: null, token: null, refreshToken: null, isAuthenticated: false });
                 }
             },
 
             restoreSession: async () => {
                 set({ isRestoring: true });
+                if (!get().token) {
+                    set({ user: null, token: null, refreshToken: null, isAuthenticated: false, isRestoring: false });
+                    return;
+                }
                 try {
-                    const token = get().token;
-                    if (!token) throw new Error('No token');
-                    let res = await fetch(`${API_URL}/auth/me`, { 
-                        headers: { 'Authorization': `Bearer ${token}` }
+                    const fetchMe = () => fetch(`${API_URL}/auth/me`, {
+                        headers: { 'Authorization': `Bearer ${get().token}` }
                     });
+                    let res = await fetchMe();
+                    // The access token lasts minutes; after a longer break, renew it before giving up.
+                    if (res.status === 401 && await get().refreshSession()) {
+                        res = await fetchMe();
+                    }
+                    if (res.status === 401 || res.status === 403) {
+                        set({ user: null, token: null, refreshToken: null, isAuthenticated: false, isRestoring: false });
+                        return;
+                    }
+                    // Other failures (server error) are not the user's fault: keep the saved session.
                     if (!res.ok) {
-                        set({ user: null, token: null, isAuthenticated: false, isRestoring: false });
+                        set({ isRestoring: false });
                         return;
                     }
                     const data = await res.json();
@@ -141,20 +159,44 @@ export const useAuthStore = create<AuthState>()(
                     if (user && !user.name) user.name = user.fullName || user.full_name || 'User';
                     set({ user, isAuthenticated: true, isRestoring: false });
                 } catch {
-                    set({ user: null, token: null, isAuthenticated: false, isRestoring: false });
+                    // Server unreachable: keep the saved session instead of signing the user out.
+                    set({ isRestoring: false });
                 }
+            },
+
+            /** Swap the refresh token for a new access token. Returns false if the session cannot be renewed. */
+            refreshSession: () => {
+                if (refreshInFlight) return refreshInFlight;
+                refreshInFlight = (async () => {
+                    const refreshToken = get().refreshToken;
+                    if (!refreshToken) return false;
+                    try {
+                        const res = await fetch(`${API_URL}/auth/refresh`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ refresh_token: refreshToken }),
+                        });
+                        if (!res.ok) return false;
+                        const data = await res.json();
+                        set({ token: data.token ?? data.access_token, refreshToken: data.refresh_token ?? null });
+                        return true;
+                    } catch {
+                        return false;
+                    }
+                })();
+                return refreshInFlight.finally(() => { refreshInFlight = null; });
             },
 
             setUser: (user: User) => {
                 set({ user });
             },
             clearSession: () => {
-                set({ user: null, token: null, isAuthenticated: false, isRestoring: false, isLoading: false });
+                set({ user: null, token: null, refreshToken: null, isAuthenticated: false, isRestoring: false, isLoading: false });
             },
         }),
         {
             name: 'saarthi-auth',
-            partialize: (state) => ({ user: state.user, isAuthenticated: state.isAuthenticated, token: state.token }),
+            partialize: (state) => ({ user: state.user, isAuthenticated: state.isAuthenticated, token: state.token, refreshToken: state.refreshToken }),
         }
     )
 );

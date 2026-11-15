@@ -1,6 +1,6 @@
 """DAO for courses, enrollments, assignments, materials, stream. Includes search (courses, materials, videos)."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,6 +79,36 @@ class CourseDAO:
             owner_id=owner_id,
         )
         db.add(c)
+        await db.flush()
+        await db.refresh(c)
+        return c
+
+    @staticmethod
+    async def update(
+        db: AsyncSession,
+        course_id: int,
+        title: str | None = None,
+        code: str | None = None,
+        instructor: str | None = None,
+        description: str | None = None,
+        thumbnail_emoji: str | None = None,
+        color: str | None = None,
+    ) -> Course | None:
+        c = await CourseDAO.get_by_id(db, course_id)
+        if not c:
+            return None
+        if title is not None:
+            c.title = title
+        if code is not None:
+            c.code = code
+        if instructor is not None:
+            c.instructor = instructor
+        if description is not None:
+            c.description = description
+        if thumbnail_emoji is not None:
+            c.thumbnail_emoji = thumbnail_emoji
+        if color is not None:
+            c.color = color
         await db.flush()
         await db.refresh(c)
         return c
@@ -320,8 +350,8 @@ class AssignmentSubmissionDAO:
         if sub:
             sub.status = status
             sub.submitted_at = datetime.now(timezone.utc)
-            if attachment_url is not None:
-                sub.attachment_url = attachment_url
+            # The student's current file list replaces the old one ("Mark as done" sends none).
+            sub.attachment_url = attachment_url
             await db.flush()
             await db.refresh(sub)
             return sub
@@ -330,8 +360,34 @@ class AssignmentSubmissionDAO:
             assignment_id=assignment_id,
             status=status,
             attachment_url=attachment_url,
+            submitted_at=datetime.now(timezone.utc),
         )
         db.add(sub)
+        await db.flush()
+        await db.refresh(sub)
+        return sub
+
+    @staticmethod
+    async def list_by_assignment(db: AsyncSession, assignment_id: int) -> list[AssignmentSubmission]:
+        result = await db.execute(
+            select(AssignmentSubmission).where(AssignmentSubmission.assignment_id == assignment_id)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def set_grade(
+        db: AsyncSession, user_id: int, assignment_id: int, grade: float | None
+    ) -> AssignmentSubmission:
+        """Grade (or ungrade) a student's work. Missing work can be graded too, as in Google Classroom."""
+        sub = await AssignmentSubmissionDAO.get(db, user_id, assignment_id)
+        if not sub:
+            sub = AssignmentSubmission(user_id=user_id, assignment_id=assignment_id, status="pending")
+            db.add(sub)
+        sub.grade = grade
+        if grade is not None:
+            sub.status = "graded"
+        else:
+            sub.status = "submitted" if sub.submitted_at else "pending"
         await db.flush()
         await db.refresh(sub)
         return sub
@@ -629,6 +685,30 @@ class ClassroomInviteDAO:
         if invite:
             invite.accepted = True
             await db.flush()
+
+    @staticmethod
+    async def list_pending_for_email(db: AsyncSession, email: str) -> list[ClassroomInvite]:
+        """Personal invites addressed to this email that are not accepted and not expired."""
+        result = await db.execute(
+            select(ClassroomInvite)
+            .where(
+                ClassroomInvite.email == email.lower().strip(),
+                ClassroomInvite.accepted == False,  # noqa: E712
+                ClassroomInvite.expires_at > datetime.now(timezone.utc),
+            )
+            .order_by(ClassroomInvite.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_by_id(db: AsyncSession, invite_id: int) -> ClassroomInvite | None:
+        result = await db.execute(select(ClassroomInvite).where(ClassroomInvite.id == invite_id))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def delete(db: AsyncSession, invite: ClassroomInvite) -> None:
+        await db.delete(invite)
+        await db.flush()
 
     @staticmethod
     async def list_by_course(
