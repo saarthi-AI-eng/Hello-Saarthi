@@ -7,6 +7,7 @@ from . import note_service
 from . import quiz_service
 from . import user_service
 from . import video_service
+from . import qa_review_service
 
 __all__ = [
     "auth_service",
@@ -17,4 +18,5 @@ __all__ = [
     "quiz_service",
     "user_service",
     "video_service",
+    "qa_review_service",
 ]

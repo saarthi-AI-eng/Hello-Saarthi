@@ -20,7 +20,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def _user_to_response(user):
     role = (user.role or "").strip().lower()
-    if role not in ("teacher", "admin"):
+    if role not in ("teacher", "admin", "qa_reviewer"):
         role = "student"
     return UserResponse(
         id=str(user.id),

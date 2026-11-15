@@ -1,0 +1,39 @@
+# BGE-M3 + Qdrant knowledge-base pipeline configuration.
+#
+# Every value here can be overridden by an environment variable (see
+# src/knowledge_base/config.py's _ENV_OVERRIDES) without editing this
+# file — useful for CI, a different machine, or a one-off run.
+#
+# data_root MUST point somewhere outside this Git repository. It has no
+# safe default baked into the code (src/knowledge_base/config.py raises
+# a clear error if it's unset here AND via SAARTHI_KB_DATA_ROOT) — you
+# must set it, in one place or the other, before running anything.
+data_root: "E:\\SaarthiData"
+
+# --- Chunking --- (starting values per the spec; tune against real
+# Saarthi content once you have a labeled sample to evaluate against —
+# see docs/KB_PIPELINE_SETUP.md's tuning section)
+chunk_target_tokens: 500
+chunk_min_tokens: 100
+chunk_max_tokens: 900
+chunk_overlap_tokens: 75
+semantic_similarity_threshold: 0.6
+semantic_boundary_detection: true
+video_segment_merge_gap_seconds: 2.0
+
+# --- Embedding ---
+embedding_model: "BAAI/bge-m3"
+embedding_revision: "main"   # pin an exact commit hash once validated, e.g. a 40-char SHA from the model's HF commit history
+embedding_dim: 1024
+embedding_device: "auto"      # auto | cuda | cpu
+embedding_batch_size: 16      # conservative for an 8GB GPU — raise if VRAM allows, lower on OOM
+embedding_checkpoint_interval: 100
+
+# --- Qdrant ---
+qdrant_url: "http://localhost:6333"
+qdrant_api_key: null          # optional for local dev; never required
+qdrant_collection: "saarthi_knowledge_base_v1"
+qdrant_upsert_batch_size: 64
+
+chunk_schema_version: "1.1"
+log_level: "INFO"

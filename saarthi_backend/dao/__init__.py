@@ -17,6 +17,7 @@ from .quiz_dao import QuizDAO, QuizQuestionDAO, QuizAttemptDAO
 from .note_dao import NoteDAO
 from .notification_dao import NotificationDAO
 from .study_guide_dao import StudyGuideDAO, StudyGuidePromptDAO
+from .qa_review_dao import QAReviewDAO
 
 __all__ = [
     "ConversationDAO",
@@ -41,4 +42,5 @@ __all__ = [
     "NotificationDAO",
     "StudyGuideDAO",
     "StudyGuidePromptDAO",
+    "QAReviewDAO",
 ]

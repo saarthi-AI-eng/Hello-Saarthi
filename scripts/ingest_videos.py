@@ -58,6 +58,8 @@ class TranscriptSegment:
     start: float
     end: float
     text: str
+    avg_logprob: Optional[float] = None    # faster-whisper only; None for vtt/srt/openai (no such signal)
+    no_speech_prob: Optional[float] = None
 
 
 def _timestamp_to_seconds(ts: str) -> float:
@@ -175,7 +177,19 @@ class LocalWhisperProvider(TranscriptionProvider):
 
         raw_segments, _info = model.transcribe(str(audio_path), language=language)
         segments = [
-            TranscriptSegment(start=float(seg.start), end=float(seg.end), text=seg.text.strip())
+            TranscriptSegment(
+                start=float(seg.start),
+                end=float(seg.end),
+                text=seg.text.strip(),
+                # Real signals faster-whisper already computes per segment —
+                # not fabricated: avg_logprob (mean log-probability of the
+                # decoded tokens; higher/less-negative = more confident) and
+                # no_speech_prob (model's own estimate that this segment is
+                # silence/non-speech, mistranscribed). Used by src/content_qa
+                # for automated QA scoring (Part 1.3).
+                avg_logprob=float(seg.avg_logprob) if seg.avg_logprob is not None else None,
+                no_speech_prob=float(seg.no_speech_prob) if seg.no_speech_prob is not None else None,
+            )
             for seg in raw_segments
             if seg.text and seg.text.strip()
         ]
@@ -363,6 +377,8 @@ def segments_to_records(
             "duration_seconds": duration_seconds,
             "transcription_provider": provider_name,
             "language": meta["language"],
+            "avg_logprob": seg.avg_logprob,
+            "no_speech_prob": seg.no_speech_prob,
         }
         if extra_metadata:
             metadata.update(extra_metadata)
@@ -526,6 +542,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    from scripts.env_loader import load_env_file
+
+    load_env_file()  # .env.kb, if present (Part 3)
+
     args = build_arg_parser().parse_args(argv)
     args.output.mkdir(parents=True, exist_ok=True)
 
@@ -545,7 +565,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     succeeded = 0
     failed = 0
-    for video_path in video_files:
+    from tqdm import tqdm
+
+    for video_path in tqdm(video_files, desc="Transcribing videos", unit="file"):
         if not video_path.exists():
             logger.error(f"File not found: {video_path}")
             failed += 1

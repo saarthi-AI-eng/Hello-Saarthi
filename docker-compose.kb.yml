@@ -1,0 +1,20 @@
+# Local Qdrant server for the BGE-M3 + Qdrant knowledge-base pipeline.
+# Separate from docker-compose.yml (the existing Postgres service for the
+# backend app) — run both together or independently:
+#   docker compose -f docker-compose.kb.yml up -d
+#
+# Storage is bind-mounted to ${SAARTHI_KB_DATA_ROOT}/qdrant/storage, NOT
+# a named Docker volume, so it's visible/backupable outside Docker and
+# consistent with "do not store the live Qdrant database inside the Git
+# repo or a cloud-synced folder" — set SAARTHI_KB_DATA_ROOT in your shell
+# (or a .env file in this directory, see .env.kb.example) before running
+# `docker compose -f docker-compose.kb.yml up -d`.
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports:
+      - "6333:6333"   # HTTP + gRPC-over-HTTP API
+      - "6334:6334"   # gRPC API
+    volumes:
+      - "${SAARTHI_KB_DATA_ROOT}/qdrant/storage:/qdrant/storage"
+    restart: unless-stopped

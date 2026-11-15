@@ -1,0 +1,29 @@
+# BGE-M3 + Qdrant knowledge-base pipeline — separate from
+# requirements-content-pipeline.txt (OCR/video) and the main
+# requirements.txt (OpenAI/FAISS-based backend) by deliberate choice: no
+# paid API, self-hosted vector store. See docs/KB_PIPELINE_SETUP.md.
+#
+# Install: pip install -r requirements-kb.txt
+#
+# qdrant-client: talks to a local or remote Qdrant server. Small,
+# pure-Python-plus-grpc, no model weights.
+qdrant-client>=1.7.0
+
+# tqdm: progress bars for every long-running stage.
+tqdm>=4.66.0
+
+# tiktoken: token counting for chunk sizing (cl100k_base encoding — an
+# estimate, not tied to BGE-M3's own tokenizer, which isn't needed just
+# to size chunks).
+tiktoken>=0.7.0
+
+# PyYAML: configs/kb_pipeline.yaml.
+pyyaml>=6.0
+
+# FlagEmbedding: BAAI/bge-m3 itself. Downloads the model (~2.2GB) to
+# your configured models cache directory on first use — NOT bundled in
+# this repo or this requirements file. Needs torch (already a
+# requirement elsewhere in this project — saarthi_backend/requirements.txt
+# pins torch==2.10.0; FlagEmbedding will use whatever torch build is
+# already installed, CPU or CUDA).
+FlagEmbedding>=1.2.0

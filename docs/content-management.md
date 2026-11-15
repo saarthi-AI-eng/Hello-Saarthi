@@ -204,7 +204,28 @@ always tried too, as an escape hatch when any processing hurts more than it help
 ```bash
 python -m scripts.ingest_notes --input data/raw/notes --output data/processed/ocr --course "Signals and Systems"
 python -m scripts.ingest_notes --file notes_012.pdf --page 4
+python -m scripts.ingest_notes --input data/raw/notes --output data/processed/ocr --resume  # resumable, for large batches
 ```
+
+`--resume` checkpoints each PDF page as it completes (appended to the
+output JSONL immediately, not just collected and written in bulk at the
+end) and skips any page already present there from a prior, interrupted
+run — for a large batch (e.g. several hundred pages) where a crash
+partway through shouldn't mean reprocessing everything already done.
+Opt-in: without it, behavior is unchanged from before.
+
+### Hybrid, content-aware pipeline (opt-in, not the default)
+
+A second, region-routing pipeline exists alongside the one above —
+`scripts/layout_detector.py` -> `scripts/recognition_router.py` ->
+`scripts/verification.py`, orchestrated by
+`scripts/hybrid_pipeline.process_page_hybrid()`. It is **not** called by
+`ingest_notes.py`'s default CLI/`process_pdf()`/`process_image()` path —
+invoke it directly, or via `scripts.evaluate_ocr --engines hybrid`. See
+`docs/ocr-architecture.md` for the full design, and
+`data/evaluation/hybrid_ocr_comparison_report.md` for why it isn't the
+default (measured: it does not currently beat the page-level pipeline on
+this project's real data).
 
 ## 5. OCR evaluation (CER/WER)
 
@@ -229,7 +250,7 @@ math/technical notation).
 
 ```bash
 python -m scripts.evaluate_ocr                               # tesseract + paddleocr (the defaults)
-python -m scripts.evaluate_ocr --engines tesseract,paddleocr,trocr
+python -m scripts.evaluate_ocr --engines tesseract,paddleocr,trocr,hybrid
 python -m scripts.evaluate_ocr --ground-truth data/evaluation/ocr_ground_truth.jsonl
 ```
 

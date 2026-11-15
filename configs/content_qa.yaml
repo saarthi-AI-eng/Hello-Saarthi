@@ -1,0 +1,60 @@
+# Automated Content QA configuration (Phase 1 — heuristic, not manually
+# reviewed/validated thresholds; see docs/KB_PIPELINE_SETUP.md). Loaded by
+# src/content_qa/config.py::load_qa_config(). Bump qa_version whenever the
+# scoring logic OR these weights/thresholds change meaningfully — that's
+# what makes already-scored records eligible for re-evaluation on the next
+# run (src/content_qa/config.py's QA_VERSION constant must match).
+
+qa_version: "qa-v2"  # v2: fixed pdf_text_layer recognition_confidence blindly returning 100 for garbled-encoding native text (see pdf_qa.py)
+
+# Must sum to 1.0 (checked at load time). Applied identically to PDF pages
+# and video segments — each dimension is computed by src/content_qa's own
+# pdf_qa.py/video_qa.py using whatever real signal is available for that
+# content type (see docs/KB_PIPELINE_SETUP.md's QA section for exactly what
+# feeds each one, and the documented limitation for signals that don't
+# exist for a given content type/provider, e.g. no confidence score at all
+# for .vtt/.srt sidecar transcripts).
+weights:
+  recognition_confidence: 0.25
+  text_completeness: 0.20
+  character_quality: 0.20
+  structural_integrity: 0.15
+  content_consistency: 0.10
+  metadata_validity: 0.10
+
+thresholds:
+  approved_min: 85
+  pending_min: 60
+  # below pending_min -> rejected
+
+# Heuristic knobs used by the dimension scorers themselves (not weights).
+character_quality:
+  # A single character repeated at least this many times in a row is
+  # treated as an OCR/ASR garbage pattern (e.g. "mmmmmmmmmm"), not legitimate
+  # repetition — real prose/code essentially never does this.
+  max_repeated_char_run: 12
+  # Ratio of control/replacement characters (U+FFFD and other non-printable,
+  # non-whitespace control chars) above which text is flagged as corrupted.
+  max_control_char_ratio: 0.02
+
+text_completeness:
+  min_word_count: 3          # fewer real words than this -> "near-empty" territory
+  min_char_count: 8
+
+structural_integrity:
+  # video: a single transcript segment longer than this many seconds is
+  # treated as suspicious (faster-whisper segments are normally well under
+  # a minute; an unusually long one often means a merge/VAD failure).
+  max_video_segment_seconds: 120
+
+content_consistency:
+  # Duplicate detection is scoped to the same source_id (repeating the same
+  # page/segment text across DIFFERENT sources is not flagged — that is
+  # normal, e.g. a shared disclaimer slide).
+  duplicate_penalty_score: 40   # score given to the dimension when an exact duplicate is found
+
+critical_failures:
+  # Any of these force qa_status=rejected regardless of the weighted score
+  # (Part 1.4: "Critical failures must not be overridden by a high
+  # weighted score"). Thresholds here, logic in src/content_qa/checks.py.
+  max_control_char_ratio_for_rejection: 0.5   # >=50% control/garbage chars

@@ -1,0 +1,50 @@
+# Dependencies for the DEDICATED ".venv-ocr" virtual environment used to
+# run scripts/ingest_notes.py and scripts/ingest_videos.py when
+# SAARTHI_HANDWRITING_OCR=paddleocr is enabled.
+#
+# Why a separate venv: paddlepaddle-gpu and a CUDA-enabled torch (needed by
+# this project's main venv for BGE-M3 embedding, see requirements-kb.txt)
+# each bundle their own private cudnn_cnn64_9.dll. paddleocr's own
+# dependency chain (paddlex -> modelscope) unconditionally imports torch
+# internally — so loading paddle and a CUDA torch in the SAME Python
+# process crashes on Windows with:
+#   OSError: [WinError 127] The specified procedure could not be found.
+#   Error loading "...\paddle\..\nvidia\cudnn\bin\cudnn_cnn64_9.dll" ...
+# Confirmed reproducible both import orders. Installing paddleocr/paddle
+# in their own venv (with no CUDA torch in it — modelscope's own torch
+# dependency resolves to the default CPU build, which bundles no cudnn, so
+# nothing collides) sidesteps this entirely while keeping both PaddleOCR
+# and BGE-M3 on GPU.
+#
+# Setup (one-time, Windows, matching this project's main venv's Python
+# version — paddlepaddle-gpu's wheel below is cp313):
+#   cd E:\Saarthi
+#   "<path to Python 3.13>\python.exe" -m venv .venv-ocr
+#   .venv-ocr\Scripts\pip install -r Hello-Saarthi-26\requirements-ocr-venv.txt
+#   .venv-ocr\Scripts\pip install https://paddle-whl.cdn.bcebos.com/stable/cu126/paddlepaddle-gpu/paddlepaddle_gpu-3.3.1-cp313-cp313-win_amd64.whl
+# (pick the cuXXX/cpXXX path matching your CUDA driver + Python version from
+# https://www.paddlepaddle.org.cn/packages/stable/ if different; a CPU-only
+# machine should install plain `pip install "paddlepaddle>=3.1"` instead —
+# PaddleOCR auto-detects and falls back to CPU either way.)
+#
+# scripts/build_kb_qdrant.py --run-ingestion auto-detects a sibling
+# E:\Saarthi\.venv-ocr and runs ingestion through it automatically. Override
+# with the SAARTHI_OCR_VENV_PYTHON environment variable if your venv lives
+# elsewhere. Running scripts/ingest_notes.py / scripts/ingest_videos.py
+# directly? Invoke them with .venv-ocr's own python the same way.
+
+pydantic>=2.0
+Pillow>=10.0
+opencv-python>=4.8
+numpy>=1.26
+pytesseract>=0.3.10
+pypdf>=5.0
+pypdfium2>=4.0
+tqdm>=4.66.0
+faster-whisper>=1.0.0
+paddleocr>=3.0
+ftfy>=6.0
+
+# See the av<19 comment in requirements-content-pipeline.txt — the same
+# faster-whisper/PyAV breaking-change pin applies here.
+av<19
