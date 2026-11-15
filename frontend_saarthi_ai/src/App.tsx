@@ -18,6 +18,7 @@ import ProgressPage from './pages/Progress';
 import StudyMaterialPage from './pages/StudyMaterial';
 import SearchPage from './pages/Search';
 import SettingsPage from './pages/settings/Settings';
+import QAReviewPage from './pages/QAReview';
 import { useAuthStore } from './stores/auth.store';
 import './stores/settings.store'; // Initialize settings (theme/font) on load
 
@@ -57,6 +58,7 @@ function App() {
           <Route path="/study-material" element={<StudentOnly><StudyMaterialPage /></StudentOnly>} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/qa-review" element={<QAReviewerOnly><QAReviewPage /></QAReviewerOnly>} />
         </Route>
 
         {/* Fallback */}
@@ -92,17 +94,27 @@ function JoinRedirect() {
   return <Navigate to={`/courses${search}`} replace />;
 }
 
-/** Student-only pages: teachers land on their class analytics instead. */
+/** Student-only pages: teachers land on their class analytics instead,
+ * QA reviewers land on their own dashboard instead. */
 function StudentOnly({ children }: { children: ReactElement }) {
   const role = useAuthStore((s) => s.user?.role);
   if (role === 'teacher') return <Navigate to="/progress" replace />;
+  if (role === 'qa_reviewer') return <Navigate to="/qa-review" replace />;
+  return children;
+}
+
+/** QA reviewer dashboard: restricted to qa_reviewer/admin — everyone else
+ * (student, teacher) is sent back to their own dashboard landing. */
+function QAReviewerOnly({ children }: { children: ReactElement }) {
+  const role = useAuthStore((s) => s.user?.role);
+  if (role !== 'qa_reviewer' && role !== 'admin') return <Navigate to="/dashboard" replace />;
   return children;
 }
 
 function GlobalChatbot() {
   const location = useLocation();
   const role = useAuthStore((s) => s.user?.role);
-  if (role === 'teacher') return null;
+  if (role === 'teacher' || role === 'qa_reviewer') return null;
   if (location.pathname === '/login' || location.pathname === '/signup') return null;
   return <AIChatbot />;
 }

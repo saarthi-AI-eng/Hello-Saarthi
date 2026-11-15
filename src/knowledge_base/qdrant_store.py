@@ -35,6 +35,12 @@ class QdrantKBStore:
         self._client = None
 
     def _ensure_client(self):
+        """The one centralized Qdrant client factory — every script in
+        this repo goes through QdrantKBStore, never constructs a
+        QdrantClient directly, so backend selection (local vs Qdrant
+        Cloud) lives in exactly one place. Never logs or raises an
+        exception containing the actual api_key value, even on a cloud
+        validation failure."""
         if self._client is not None:
             return self._client
         try:
@@ -45,10 +51,51 @@ class QdrantKBStore:
                 "requirements-kb.txt` (see docs/KB_PIPELINE_SETUP.md)."
             ) from exc
 
-        # api_key=None is valid and expected for a local, unauthenticated
-        # Qdrant instance — never required for local development.
-        self._client = QdrantClient(url=self.config.qdrant_url, api_key=self.config.qdrant_api_key or None)
+        backend = (self.config.qdrant_backend or "local").strip().lower()
+        if backend not in ("local", "cloud"):
+            raise ValueError(f"Invalid qdrant_backend {backend!r} — must be 'local' or 'cloud'.")
+
+        if backend == "cloud":
+            url = self.config.qdrant_cloud_url
+            api_key = self.config.qdrant_cloud_api_key
+            if not url:
+                raise ValueError(
+                    "QDRANT_BACKEND=cloud requires QDRANT_CLOUD_URL to be set (in .env.kb) — "
+                    "see docs/CLOUD_QDRANT_PIPELINE.md."
+                )
+            if not api_key:
+                raise ValueError(
+                    "QDRANT_BACKEND=cloud requires QDRANT_CLOUD_API_KEY to be set (in .env.kb) — "
+                    "see docs/CLOUD_QDRANT_PIPELINE.md."
+                )
+            if not url.startswith("https://"):
+                raise ValueError(
+                    "QDRANT_CLOUD_URL must use https:// — Qdrant Cloud requires a secure connection."
+                )
+        else:
+            url = self.config.qdrant_url
+            # api_key=None is valid and expected for a local, unauthenticated
+            # Qdrant instance — never required for local development.
+            api_key = self.config.qdrant_api_key or None
+
+        logger.info(f"Connecting to Qdrant ({backend} backend) at {url}")  # api_key deliberately never logged
+        self._client = QdrantClient(url=url, api_key=api_key)
         return self._client
+
+    def verify_connection(self) -> bool:
+        """Lightweight connectivity check for either backend. Raises a
+        clear RuntimeError on failure that includes only the backend name
+        and exception TYPE — never the raw exception text, since a wrapped
+        HTTP client error could in principle echo back request details."""
+        client = self._ensure_client()
+        backend = (self.config.qdrant_backend or "local").strip().lower()
+        try:
+            client.get_collections()
+            return True
+        except Exception as exc:  # noqa: BLE001 — deliberately re-raised narrow, never the raw exception text
+            raise RuntimeError(
+                f"Could not connect to Qdrant ({backend} backend): {type(exc).__name__}"
+            ) from None
 
     def ensure_collection(self, recreate: bool = False) -> None:
         from qdrant_client.models import Distance, VectorParams

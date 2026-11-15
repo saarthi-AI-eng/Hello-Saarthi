@@ -107,6 +107,41 @@ def test_duplicate_page_within_same_source_is_flagged(qa_config):
     assert r2.checks["content_consistency"] < 100.0
 
 
+def test_clean_native_text_layer_still_scores_full_confidence(qa_config):
+    record = pdf_record(metadata={
+        "ocr_engine": "pdf_text_layer", "ocr_confidence": None,
+        "page_quality": "GOOD", "review_reasons": [], "math_equation_blocks": [],
+    })
+    result = score_pdf_page(record, qa_config)
+    assert result.checks["recognition_confidence"] == 100.0
+    assert result.status == "approved"
+
+
+def test_garbled_native_text_layer_is_not_blindly_trusted(qa_config):
+    """Real bug found on this project's actual data: a PDF with a broken
+    font ToUnicode map (a CamScanner-style date/time stamp) extracts as
+    plausible-length but nonsensical Unicode via the native text layer —
+    previously scored recognition_confidence=100 unconditionally. Real
+    example, confirmed control_char_ratio=0.204 on an actually-garbled
+    page; every genuinely-fine native page measured <=0.094."""
+    garbled_text = ":ĂŶ\x03Ϭϱ͕\x03ϮϬϮϭ͕\x03D\x18\x04\x03>ĞĐ\ndƵĞƐĚĂǇ͕\x03:ĂŶƵĂƌǇ\x03ϱ͕\x03ϮϬϮϭ Ϯ͗ϱϯ\x03WD"
+    record = pdf_record(
+        text=garbled_text,
+        # Exactly the real record's own upstream classification —
+        # ingest_notes.py's classify_page_quality() already flagged this
+        # (its own, coarser near-empty threshold) before QA ever sees it.
+        metadata={
+            "ocr_engine": "pdf_text_layer", "ocr_confidence": None,
+            "page_quality": "POOR_EXTRACTION", "review_reasons": ["NEAR_EMPTY_OUTPUT", "NO_CONFIDENCE_SCORE"],
+            "math_equation_blocks": [],
+        },
+    )
+    result = score_pdf_page(record, qa_config)
+    assert result.checks["recognition_confidence"] < 100.0
+    assert "native_text_layer_garbled" in ";".join(result.issues)
+    assert result.status == "rejected"
+
+
 def test_scoring_is_deterministic(qa_config):
     record = pdf_record()
     r1 = score_pdf_page(record, qa_config)

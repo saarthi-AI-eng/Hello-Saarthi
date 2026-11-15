@@ -35,3 +35,16 @@ python-dotenv>=1.0.0
 # Pydantic (for schema validation)
 pydantic>=2.0.0
 youtube-transcript-api>=0.6.0
+
+# File locking for the manual QA review workflow's atomic JSONL updates
+# (src/content_qa/manual_review.py) — already an installed transitive
+# dependency of qdrant-client; declared directly since the backend now
+# depends on it too, independent of qdrant-client.
+portalocker>=2.7.0
+
+# Test-only: saarthi_backend/tests/conftest.py's db_engine fixture uses
+# sqlite+aiosqlite for a real-DB test backend without needing Postgres.
+# pytest-asyncio was already installed/relied on (see @pytest.mark.asyncio
+# usage) but neither was previously declared anywhere.
+pytest-asyncio>=0.23.0
+aiosqlite>=0.19.0

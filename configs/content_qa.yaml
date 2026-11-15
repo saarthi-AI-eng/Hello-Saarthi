@@ -5,7 +5,7 @@
 # what makes already-scored records eligible for re-evaluation on the next
 # run (src/content_qa/config.py's QA_VERSION constant must match).
 
-qa_version: "qa-v1"
+qa_version: "qa-v2"  # v2: fixed pdf_text_layer recognition_confidence blindly returning 100 for garbled-encoding native text (see pdf_qa.py)
 
 # Must sum to 1.0 (checked at load time). Applied identically to PDF pages
 # and video segments — each dimension is computed by src/content_qa's own

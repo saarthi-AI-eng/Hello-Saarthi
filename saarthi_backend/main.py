@@ -104,6 +104,15 @@ def _load_classroom_invites_ddl() -> list[str]:
 _CLASSROOM_INVITES_DDL = _load_classroom_invites_ddl()
 
 
+def _load_qa_review_actions_ddl() -> list[str]:
+    sql = (_backend_dir / "migrations" / "009_qa_review_actions.sql").read_text(encoding="utf-8")
+    body = "\n".join(line for line in sql.splitlines() if not line.strip().startswith("--"))
+    return [s.strip() for s in body.split(";") if s.strip()]
+
+
+_QA_REVIEW_ACTIONS_DDL = _load_qa_review_actions_ddl()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: PostgreSQL, optional dev table creation. Shutdown: dispose. AI runs in-process (src/ graph)."""
@@ -146,9 +155,15 @@ async def lifespan(app: FastAPI):
         # Invites / class codes had an ORM model but no migration (see 008_classroom_invites.sql).
         for stmt in _CLASSROOM_INVITES_DDL:
             await conn.execute(text(stmt))
+        # Manual QA review audit log (see 009_qa_review_actions.sql).
+        for stmt in _QA_REVIEW_ACTIONS_DDL:
+            await conn.execute(text(stmt))
+        # (see 010_qa_review_actions_edited.sql)
+        await conn.execute(text("ALTER TABLE saarthi_qa_review_actions ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE"))
     logger.info("Column migration: saarthi_videos.transcript_text ensured")
     logger.info("Table migration: saarthi_code_problems ensured")
     logger.info("Table migration: saarthi_classroom_invites ensured")
+    logger.info("Table migration: saarthi_qa_review_actions ensured")
     session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,

@@ -143,6 +143,21 @@ curl http://localhost:6333/collections
 ```
 Should return `{"result":{"collections":[]},...}` on a fresh instance.
 
+## 10b. Qdrant Cloud (Optional Dual-Backend Support)
+
+Every script in this pipeline (`build_kb_qdrant.py`, `validate_kb_qdrant.py`,
+`export_kb_qdrant.py`) goes through one centralized client factory
+(`QdrantKBStore._ensure_client()` in `src/knowledge_base/qdrant_store.py`),
+which resolves to either backend based on `QDRANT_BACKEND` (`local` —
+default, this section — or `cloud`). **Local remains fully independent and
+unaffected** — nothing here changes local behavior unless you explicitly
+set `QDRANT_BACKEND=cloud`. Switching the backend does **not** migrate
+data; local and Cloud are separate databases. Full setup, a side-by-side
+comparison table, and the explicit migration utility
+(`scripts/migrate_qdrant_local_to_cloud.py`) are in the two dedicated
+runbooks: `docs/LOCAL_QDRANT_PIPELINE.md` and
+`docs/CLOUD_QDRANT_PIPELINE.md` — not duplicated here.
+
 ## 11. Qdrant Persistent Storage Configuration
 
 `docker-compose.kb.yml` bind-mounts
@@ -559,6 +574,9 @@ under a data directory.
 
 - No CLI flag to recreate/drop the Qdrant collection (§28) — a manual
   `curl -X DELETE` step today.
+- Qdrant Cloud restore (from a downloaded snapshot) isn't wrapped by a
+  script — Qdrant's own snapshot-recover HTTP API, documented in
+  `docs/CLOUD_QDRANT_PIPELINE.md`.
 - Heading/section hierarchy extraction (`Chunk.heading`) is not yet
   implemented — always `None` currently; the field exists in the schema
   for when it is.

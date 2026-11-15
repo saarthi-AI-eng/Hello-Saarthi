@@ -63,11 +63,31 @@ def _paddleocr_confidence_score(c: float) -> float:
     return c / 0.60 * 50.0
 
 
-def _recognition_confidence(metadata: dict, issues: list[str]) -> float:
+_NATIVE_TEXT_GARBLE_CLEAN_RATIO = 0.10   # every real approved native-text page measured <= 0.094
+_NATIVE_TEXT_GARBLE_BROKEN_RATIO = 0.20  # every garbled-encoding page measured found so far >= 0.125
+
+
+def _recognition_confidence(text: str, metadata: dict, issues: list[str]) -> float:
     engine = metadata.get("ocr_engine")
     raw_conf = metadata.get("ocr_confidence")
     if engine == "pdf_text_layer":
-        return 100.0  # native PDF text layer — not OCR, effectively ground truth
+        # Native PDF text layer is normally trustworthy (not OCR) — but a
+        # PDF with a broken/missing font ToUnicode map (common on a
+        # CamScanner-style date/time stamp baked into the page) extracts as
+        # plausible-length but nonsensical Unicode — short, readable-looking,
+        # and 100%-confident by the old logic, yet completely unusable.
+        # Confirmed on this project's real data: every genuinely-fine native
+        # page measured control_char_ratio <= 0.094; every garbled one
+        # measured >= 0.125 — a clean, evidence-based separation, not a
+        # guessed cutoff.
+        ratio = control_char_ratio(text)
+        if ratio <= _NATIVE_TEXT_GARBLE_CLEAN_RATIO:
+            return 100.0
+        issues.append(f"native_text_layer_garbled:{ratio:.3f}")
+        if ratio >= _NATIVE_TEXT_GARBLE_BROKEN_RATIO:
+            return 10.0
+        span = _NATIVE_TEXT_GARBLE_BROKEN_RATIO - _NATIVE_TEXT_GARBLE_CLEAN_RATIO
+        return 100.0 - (ratio - _NATIVE_TEXT_GARBLE_CLEAN_RATIO) / span * 90.0
     if raw_conf is None:
         issues.append("missing_confidence_signal")
         return 70.0  # neutral default — documented, not fabricated precision
@@ -167,7 +187,7 @@ def score_pdf_page(
         return _critical(config, f"severe_character_corruption:{ratio:.2f}", text, metadata)
 
     checks = {
-        "recognition_confidence": _recognition_confidence(metadata, issues),
+        "recognition_confidence": _recognition_confidence(text, metadata, issues),
         "text_completeness": _text_completeness(text, metadata, config, issues),
         "character_quality": _character_quality(text, metadata, config, issues),
         "structural_integrity": _structural_integrity(metadata, config, issues),

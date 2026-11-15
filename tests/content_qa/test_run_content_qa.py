@@ -52,12 +52,18 @@ def test_rerun_is_idempotent_and_skips_unchanged(kb_config):
 
 
 def test_qa_version_bump_triggers_rescoring(kb_config):
+    # Explicit, test-local version strings — independent of whatever
+    # configs/content_qa.yaml's real qa_version currently is, so this test
+    # doesn't silently stop testing anything the next time that file's
+    # version is bumped for a real scoring-logic fix.
     path = kb_config.ocr_output_dir / "note.jsonl"
     _write(path, [pdf_record()])
-    run_content_qa.run(kb_config)
+    original = load_qa_config()
+    original.qa_version = "test-v1"
+    run_content_qa.run(kb_config, qa_config=original)
 
     bumped = load_qa_config()
-    bumped.qa_version = "qa-v2"
+    bumped.qa_version = "test-v2"
     summary = run_content_qa.run(kb_config, qa_config=bumped)
     assert summary["records_scored"] == 1
     assert summary["records_skipped_unchanged"] == 0

@@ -835,12 +835,40 @@ def _derive_note_id(stem: str) -> str:
     return slug or "NOTE"
 
 
-def resolve_metadata(source_path: Path, cli_course: Optional[str], cli_topic: Optional[str], cli_note_id: Optional[str]) -> dict:
+def disambiguated_stem(relative_path: Path) -> str:
+    """A stem unique across a recursively-discovered input tree. Plain
+    `.stem` collides whenever two files share a name in different
+    folders — a real case found in this project's actual dataset: a
+    Google-Drive export with one same-named daily PDF repeated under two
+    different month folders (same filename, genuinely different
+    content). Prefixes with the immediate parent folder name, unless the
+    file is directly at the input root (a single path component), which
+    keeps today's exact filenames for any already-processed flat-layout
+    input unchanged."""
+    parts = relative_path.parts
+    if len(parts) <= 1:
+        return relative_path.stem
+    return f"{parts[-2]}_{relative_path.stem}"
+
+
+def resolve_metadata(
+    source_path: Path,
+    cli_course: Optional[str],
+    cli_topic: Optional[str],
+    cli_note_id: Optional[str],
+    relative_path: Optional[Path] = None,
+) -> dict:
     manifest = _load_manifest(source_path)
-    note_id = cli_note_id or manifest.get("note_id") or _derive_note_id(source_path.stem)
+    stem_for_id = disambiguated_stem(relative_path) if relative_path is not None else source_path.stem
+    note_id = cli_note_id or manifest.get("note_id") or _derive_note_id(stem_for_id)
     course = cli_course or manifest.get("course")
     topic = cli_topic or manifest.get("topic")
-    return {"note_id": note_id, "course": course, "topic": topic}
+    # The ORIGINAL filename alone is also ambiguous for display/retrieval
+    # (scripts.ingest_notes writes it as ContentRecord.source, and
+    # src/content_qa/manual_review.py's source-image preview resolves it
+    # back to a file on disk) — the relative path disambiguates that too.
+    source_override = str(relative_path).replace("\\", "/") if relative_path is not None else None
+    return {"note_id": note_id, "course": course, "topic": topic, "source_override": source_override}
 
 
 def _light_clean(text: str) -> str:
@@ -1610,7 +1638,7 @@ def process_pdf(
             content_type=ContentType.PDF_NOTE,
             course=meta["course"],
             topic=meta["topic"],
-            source=pdf_path.name,
+            source=meta.get("source_override") or pdf_path.name,
             source_id=meta["note_id"],
             lecture=None,
             page=page_number,
@@ -1642,7 +1670,7 @@ def process_image(image_path: Path, meta: dict, preprocess: bool, dpi: Optional[
             content_type=ContentType.HANDWRITTEN_NOTE,
             course=meta["course"],
             topic=meta["topic"],
-            source=image_path.name,
+            source=meta.get("source_override") or image_path.name,
             source_id=meta["note_id"],
             lecture=None,
             page=1,
@@ -1666,10 +1694,16 @@ def process_note_file(
     cli_topic: Optional[str],
     cli_note_id: Optional[str],
     resume: bool = False,
+    input_root: Optional[Path] = None,
 ) -> dict:
     start = time.perf_counter()
-    meta = resolve_metadata(source_path, cli_course, cli_topic, cli_note_id)
-    jsonl_path = output_dir / f"{source_path.stem}.jsonl"
+    try:
+        relative_path = source_path.relative_to(input_root) if input_root is not None else None
+    except ValueError:
+        relative_path = None  # --file given a path outside input_root — today's exact (unambiguous) behavior
+    meta = resolve_metadata(source_path, cli_course, cli_topic, cli_note_id, relative_path=relative_path)
+    output_stem = disambiguated_stem(relative_path) if relative_path is not None else source_path.stem
+    jsonl_path = output_dir / f"{output_stem}.jsonl"
     try:
         if source_path.suffix.lower() in PDF_EXTENSIONS:
             # checkpoint_path=jsonl_path itself: each page is appended there as
@@ -1754,7 +1788,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not args.input.exists():
             logger.error(f"Input directory not found: {args.input}")
             return 1
-        note_files = sorted(p for p in args.input.iterdir() if p.suffix.lower() in SUPPORTED_EXTENSIONS)
+        # Recursive: real datasets (e.g. a Google-Drive export) nest notes
+        # under per-month/per-topic subfolders — iterdir() alone only saw
+        # files directly in args.input and silently missed everything nested.
+        note_files = sorted(p for p in args.input.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS)
 
     if not note_files:
         logger.warning(f"No note files found in {args.input}")
@@ -1779,6 +1816,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.topic,
             args.note_id,
             resume=args.resume,
+            input_root=args.input,
         )
         if result["status"] == "success":
             succeeded += 1

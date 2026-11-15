@@ -14,6 +14,8 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
+from tqdm import tqdm
+
 from src.knowledge_base.chunker import chunk_documents
 from src.knowledge_base.config import KBConfig, load_config
 from src.knowledge_base.schema import NormalizedDoc
@@ -26,14 +28,12 @@ def load_normalized_docs(path: Path) -> List[NormalizedDoc]:
         raise FileNotFoundError(f"{path} does not exist — run `python -m scripts.normalize_content_kb` first.")
     docs = []
     with open(path, "r", encoding="utf-8") as f:
-        for line_number, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                docs.append(NormalizedDoc(**json.loads(line)))
-            except (json.JSONDecodeError, TypeError) as exc:
-                raise ValueError(f"Malformed NormalizedDoc at {path}:{line_number}: {exc}") from exc
+        lines = [l for l in f if l.strip()]
+    for line_number, line in enumerate(tqdm(lines, desc="Loading normalized docs", unit="doc"), start=1):
+        try:
+            docs.append(NormalizedDoc(**json.loads(line)))
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ValueError(f"Malformed NormalizedDoc at {path}:{line_number}: {exc}") from exc
     return docs
 
 

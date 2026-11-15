@@ -62,6 +62,8 @@ def normalize_file(input_path: Path, allow_pending: bool) -> List[NormalizedDoc]
     for i, record in enumerate(read_jsonl(input_path, skip_invalid=False), start=1):
         if record.qa_status.value == "rejected":
             continue  # never index explicitly rejected content
+        if record.qa_status.value == "reprocess_requested":
+            continue  # manual QA sent this back for reprocessing — never KB-eligible, regardless of --allow-pending
         if record.qa_status.value == "pending" and not allow_pending:
             continue
         if not record.text or not record.text.strip():

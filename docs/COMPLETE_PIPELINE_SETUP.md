@@ -42,9 +42,17 @@ run on Linux this session — called out explicitly wherever that applies.
        page/segment-level scoring -> qa_status: approved | pending | rejected
                            |
                            v
+            qa_status=pending ---> /qa-review dashboard (qa_reviewer role)
+            |                      accept -> approved | reject -> rejected
+            |                      reprocess -> reprocess_requested
+            v                      (writes back to the SAME JSONL file —
+      qa_status=approved            picked up by the next run below)
+            |
+                           v
              scripts/normalize_content_kb.py
          (default: only approved; --allow-pending also includes pending;
-          rejected is NEVER included, with or without --allow-pending)
+          rejected/reprocess_requested are NEVER included, with or
+          without --allow-pending)
                            |
                            v
                     NormalizedDoc JSONL
@@ -248,6 +256,21 @@ PDFs/videos stay inside the repo under `data/raw/notes/` /
 `data/raw/videos/` (small, already gitignored for their actual content —
 only `.gitkeep`/`README.md` are tracked).
 
+### 5.6a Raw Input Layout: Recursive, Collision-Safe
+
+`scripts/ingest_notes.py` discovers PDFs/images **recursively** under
+`data/raw/notes/` (`.rglob`, not just the top level) — a real dataset
+(e.g. a Google-Drive export) nests files under per-month/per-topic
+subfolders, and earlier versions of this script only saw files directly
+in the root. Two files with the **same filename in different folders**
+(confirmed on this project's real data: `Apr05_2021.pdf` under both
+`04_Apr/` and `April/`, genuinely different content) are automatically
+disambiguated — the OCR output filename and the record's `source_id`
+get prefixed with the immediate parent folder name
+(`04_Apr_Apr05_2021` / `April_Apr05_2021`), so neither output nor
+content ID silently collides. Files directly at the root (no subfolder)
+keep their exact plain filename, unchanged from before.
+
 ---
 
 ## 5.7 Environment Configuration
@@ -356,11 +379,36 @@ host's IP instead of `localhost`-only and set a real `QDRANT_API_KEY`
 (Qdrant supports API-key auth natively) — do not rely on network
 obscurity alone.
 
+**Qdrant Cloud as an alternative/addition to local Docker:** this
+pipeline also supports `QDRANT_BACKEND=cloud` as a fully independent
+second database — see `docs/LOCAL_QDRANT_PIPELINE.md` and
+`docs/CLOUD_QDRANT_PIPELINE.md` for the two separate, complete runbooks,
+and `scripts/migrate_qdrant_local_to_cloud.py` for the explicit, manual
+migration path between them (never automatic).
+
 ---
 
 ## 5.9 Running the Complete Pipeline
 
-**Single command, everything** (OCR/transcription + QA + build):
+**Recommended, real production pattern** (notes/PDFs only, approved-only
+— verified on this project's actual dataset: 126 input files → 260
+approved → 206 chunks → 206 Cloud/local Qdrant points):
+```powershell
+# OCR/PDF ingestion only — never touches videos, recursive (see §5.6a)
+..\.venv-ocr\Scripts\python.exe -m scripts.ingest_notes --output "<DATA_ROOT>\source_content\ocr"
+
+# QA -> normalize (approved-only by default) -> chunk -> embed -> Qdrant upsert
+python -m scripts.build_kb_qdrant
+```
+Two separate commands, deliberately: `--run-ingestion` on
+`build_kb_qdrant` also invokes `ingest_videos.py` — use it only when you
+actually want video transcription too. Production uploads should also
+**not** pass `--allow-pending` — only `approved` content belongs in the
+KB; `pending` goes through manual review first (§5.9a), `rejected`/
+`reprocess_requested` stay excluded permanently.
+
+**Everything in one command** (OCR + video transcription + QA + build,
+including unreviewed `pending` content — development/demo use only):
 ```powershell
 python -m scripts.build_kb_qdrant --run-ingestion --allow-pending
 ```
@@ -419,6 +467,43 @@ records and never reloaded any model.
 
 ---
 
+## 5.9a Manual QA Review (`pending` content)
+
+Auto-QA assigns `approved` (score ≥85), `pending` (60-84), or `rejected`
+(<60; critical failures force this regardless of score). Only `approved`
+reaches the KB by default. `pending` content needs a human — the
+`qa_reviewer` role's dashboard (`/qa-review` in the web app; seed an
+account with `python -m saarthi_backend.scripts.seed_qa_reviewer`) lists
+every pending page/segment, side by side with the rendered source page,
+an editable text box, and any equation second-opinion suggestions.
+Accept/Reject/Send-for-reprocessing there flips that record's
+`qa_status` directly in its OCR JSONL file — the same file
+`normalize_content_kb.py` already reads, so an `accept` makes it
+eligible for the **next** `build_kb_qdrant` run with zero extra steps;
+nothing is pushed to Qdrant immediately from the dashboard itself.
+
+**Improving Auto-QA's scoring without re-running OCR/embedding.** If
+you find Auto-QA's calibration is wrong in a specific, evidence-backed
+way (not just "I want fewer pending items") — e.g. a whole category of
+pages scoring too generously or too harshly for an identifiable reason
+— the fix belongs in `src/content_qa/pdf_qa.py` / `video_qa.py` (the
+scoring logic), never in `configs/content_qa.yaml`'s weights/thresholds
+just to shift counts. After such a fix, bump `qa_version` in
+`configs/content_qa.yaml`, then re-score everything **without touching
+OCR, embedding, or Qdrant at all**:
+```powershell
+python -m scripts.run_content_qa
+```
+The version bump makes every record eligible for re-evaluation
+automatically (no `--force` needed); this is pure CPU, no GPU, no model
+load, no network — verified on this project's real 126-file dataset:
+1120 records re-scored in under a second. Only records whose new status
+actually changed get rewritten; already-`approved` records are
+untouched (and therefore nothing new needs to go to Qdrant unless the
+fix caused *new* approvals).
+
+---
+
 ## 5.10 Small-Sample Test
 
 Before processing a full corpus, verify the whole chain on 1-2 small
@@ -444,15 +529,28 @@ Do not run the full dataset until this passes cleanly.
 ## 5.11 Full Dataset Processing
 
 ```powershell
-python -m scripts.build_kb_qdrant --run-ingestion --allow-pending
+# Notes/PDFs only, production (approved-only, no video processing):
+..\.venv-ocr\Scripts\python.exe -m scripts.ingest_notes --output "<DATA_ROOT>\source_content\ocr"
+python -m scripts.build_kb_qdrant
 ```
-(no `--sample`). Both `ingest_notes.py`/`ingest_videos.py` and
+(no `--sample`, no `--allow-pending`, no `--run-ingestion`). Discovery
+is recursive and collision-safe (§5.6a) — a nested, multi-folder export
+is handled correctly, not just a flat directory of files.
+
+**Verified on this project's real dataset**: 122 PDFs (1064 pages, 584MB,
+recursively nested in dated subfolders) → 126 OCR output files → 260
+approved / 607 pending / 252 rejected after Auto-QA → 206 chunks → 206
+embedded, 1024-dim → 206 Qdrant points, 0 duplicates, 0 validation
+warnings. The 607 `pending` need manual review (§5.9a) before they can
+ever reach the KB — that is expected, not a failure.
+
+Both `ingest_notes.py`/`ingest_videos.py` and
 `run_content_qa`/`embed_chunks_kb` show a `tqdm` progress bar with
 per-file/per-batch ETA. **Disk space:** OCR JSONL output is small
 (kilobytes per page); the dominant cost is the BGE-M3 model cache (~2.2GB,
-once) and whatever Qdrant storage your corpus's vector count needs (14
-chunks → ~1MB; scale roughly linearly with chunk count × 1024 dims × 4
-bytes × Qdrant's own index overhead).
+once) and whatever Qdrant storage your corpus's vector count needs
+(scale roughly linearly with chunk count × 1024 dims × 4 bytes ×
+Qdrant's own index overhead — 206 chunks was well under 1MB).
 
 **Recovery after interruption:** just re-run the same command. Ingestion
 re-processes any file whose output JSONL doesn't already exist (per-file,

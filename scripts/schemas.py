@@ -38,6 +38,7 @@ class QAStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    REPROCESS_REQUESTED = "reprocess_requested"  # manual QA sent this back for another OCR/transcription pass — never KB-eligible (see scripts/normalize_content_kb.py)
 
 
 class ContentRecord(BaseModel):
