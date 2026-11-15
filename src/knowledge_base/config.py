@@ -55,8 +55,19 @@ class KBConfig:
     embedding_checkpoint_interval: int = 100  # chunks between checkpoint writes
 
     # --- Qdrant ---
+    # local/cloud selection (new): qdrant_url/qdrant_api_key are the LOCAL
+    # backend's address (kept for backward compat with existing QDRANT_URL/
+    # QDRANT_API_KEY env vars and docker-compose.kb.yml); qdrant_cloud_url/
+    # qdrant_cloud_api_key are entirely separate fields for Qdrant Cloud.
+    # QdrantKBStore._ensure_client() resolves which pair to actually use
+    # based on qdrant_backend — see that method for the one place this
+    # matters. Local remains the default; nothing changes for existing
+    # local-only setups that never set QDRANT_BACKEND/QDRANT_CLOUD_*.
+    qdrant_backend: str = "local"  # "local" | "cloud"
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: Optional[str] = None
+    qdrant_cloud_url: str = ""
+    qdrant_cloud_api_key: Optional[str] = None
     qdrant_collection: str = "saarthi_knowledge_base_v1"
     qdrant_upsert_batch_size: int = 64
 
@@ -119,6 +130,14 @@ class KBConfig:
     def logs_dir(self) -> Path:
         return self.data_root / "logs"
 
+    @property
+    def effective_qdrant_url(self) -> str:
+        return self.qdrant_cloud_url if self.qdrant_backend == "cloud" else self.qdrant_url
+
+    @property
+    def effective_qdrant_api_key(self) -> Optional[str]:
+        return self.qdrant_cloud_api_key if self.qdrant_backend == "cloud" else self.qdrant_api_key
+
     def ensure_directories(self) -> None:
         """Creates every directory this config references, if missing.
         Never destructive — only creates, never clears or overwrites."""
@@ -131,8 +150,16 @@ class KBConfig:
             prop.mkdir(parents=True, exist_ok=True)
 
     def to_dict(self) -> dict[str, Any]:
+        """Never includes real API key VALUES — this dict is written to
+        manifest.json/config_snapshot.json on disk (not committed, but
+        still shouldn't hold a plaintext secret). Presence is shown as a
+        boolean so a manifest can still confirm 'a cloud key was configured'
+        without ever containing the key itself."""
         d = {}
         for f in fields(self):
+            if f.name in ("qdrant_api_key", "qdrant_cloud_api_key"):
+                d[f.name] = "<redacted>" if getattr(self, f.name) else None
+                continue
             value = getattr(self, f.name)
             d[f.name] = str(value) if isinstance(value, Path) else value
         return d
@@ -146,6 +173,9 @@ _ENV_OVERRIDES = {
     "qdrant_url": "QDRANT_URL",
     "qdrant_api_key": "QDRANT_API_KEY",
     "qdrant_collection": "QDRANT_COLLECTION",
+    "qdrant_backend": "QDRANT_BACKEND",
+    "qdrant_cloud_url": "QDRANT_CLOUD_URL",
+    "qdrant_cloud_api_key": "QDRANT_CLOUD_API_KEY",
 }
 _INT_FIELDS = {"embedding_batch_size", "chunk_target_tokens", "chunk_min_tokens", "chunk_max_tokens", "chunk_overlap_tokens", "embedding_checkpoint_interval", "qdrant_upsert_batch_size", "embedding_dim"}
 _FLOAT_FIELDS = {"semantic_similarity_threshold", "video_segment_merge_gap_seconds"}
@@ -189,6 +219,19 @@ def load_config(config_path: Optional[Path] = None) -> KBConfig:
             setattr(config, field_name, Path(env_value))
         else:
             setattr(config, field_name, env_value)
+
+    # QDRANT_LOCAL_URL is the new, explicit name for the same field QDRANT_URL
+    # already maps above — applied after the loop so it wins if both happen
+    # to be set, without disturbing QDRANT_URL's existing back-compat mapping.
+    if os.environ.get("QDRANT_LOCAL_URL"):
+        config.qdrant_url = os.environ["QDRANT_LOCAL_URL"]
+
+    config.qdrant_backend = (config.qdrant_backend or "local").strip().lower()
+    if config.qdrant_backend not in ("local", "cloud"):
+        raise ValueError(
+            f"Invalid QDRANT_BACKEND {config.qdrant_backend!r} — must be 'local' or 'cloud'. "
+            "See .env.kb.example."
+        )
 
     if not config.data_root or str(config.data_root) == ".":
         raise ValueError(

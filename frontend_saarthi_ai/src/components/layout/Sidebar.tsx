@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, BookOpen, MessageSquare, Code2,
     BarChart3, Settings, ChevronLeft, ChevronRight,
-    GraduationCap, Eye, Flame, BookMarked, GripVertical
+    GraduationCap, Eye, Flame, BookMarked, GripVertical, ClipboardCheck
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import './Sidebar.css';
@@ -34,6 +34,10 @@ const TEACHER_NAV_ITEMS: NavItem[] = [
     { path: '/videos', label: 'Video Library', icon: Eye },
 ];
 
+const QA_REVIEWER_NAV_ITEMS: NavItem[] = [
+    { path: '/qa-review', label: 'QA Review', icon: ClipboardCheck },
+];
+
 const ICON_MAP: Record<string, LucideIcon> = {
     '/dashboard': LayoutDashboard,
     '/courses': BookOpen,
@@ -43,6 +47,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
     '/videos': Eye,
     '/progress': BarChart3,
     '/study-material': BookMarked,
+    '/qa-review': ClipboardCheck,
 };
 
 const STORAGE_KEY = 'saarthi-sidebar-order';
@@ -88,12 +93,14 @@ const bottomItems = [
 export default function Sidebar() {
     const [collapsed, setCollapsed] = useState(false);
     const location = useLocation();
-    const isTeacher = useAuthStore((s) => s.user?.role) === 'teacher';
-    const orderKey = isTeacher ? `${STORAGE_KEY}-teacher` : STORAGE_KEY;
+    const role = useAuthStore((s) => s.user?.role);
+    const isTeacher = role === 'teacher';
+    const isQAReviewer = role === 'qa_reviewer';
+    const orderKey = isTeacher ? `${STORAGE_KEY}-teacher` : isQAReviewer ? `${STORAGE_KEY}-qa-reviewer` : STORAGE_KEY;
 
     // Draggable nav items
     const [navItems, setNavItems] = useState<NavItem[]>(() =>
-        loadOrder(isTeacher ? TEACHER_NAV_ITEMS : DEFAULT_NAV_ITEMS, orderKey));
+        loadOrder(isTeacher ? TEACHER_NAV_ITEMS : isQAReviewer ? QA_REVIEWER_NAV_ITEMS : DEFAULT_NAV_ITEMS, orderKey));
     const dragIdx = useRef<number | null>(null);
     const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
 

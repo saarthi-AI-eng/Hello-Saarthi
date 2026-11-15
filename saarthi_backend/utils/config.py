@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # Admin panel — static bearer token protecting /api/admin/* routes
     admin_secret_token: str = ""
 
+    # Content QA pipeline — reuses the SAME env var the KB pipeline itself
+    # uses (src/knowledge_base/config.py), so the manual QA dashboard reads
+    # and writes the exact same OCR/transcript JSONL files, not a copy.
+    saarthi_kb_data_root: str = ""
+
     # Email (SMTP) — classroom invites
     smtp_host: str = ""
     smtp_port: int = 587

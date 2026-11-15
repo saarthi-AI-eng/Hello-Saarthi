@@ -9,6 +9,7 @@ from .notification_model import Notification
 from .chat_model import Conversation, ChatMessage
 from .code_problem_model import CodeProblem
 from .study_guide_model import StudyGuide, StudyGuidePrompt
+from .qa_review_model import QAReviewAction
 
 __all__ = [
     "Base",
@@ -35,4 +36,5 @@ __all__ = [
     "CodeProblem",
     "StudyGuide",
     "StudyGuidePrompt",
+    "QAReviewAction",
 ]

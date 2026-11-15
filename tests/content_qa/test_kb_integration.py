@@ -49,6 +49,18 @@ def test_rejected_never_included_even_with_allow_pending(kb_config):
     assert result["docs"] == 1
 
 
+def test_reprocess_requested_excluded_even_with_allow_pending(kb_config):
+    from scripts.schemas import QAStatus
+
+    path = kb_config.ocr_output_dir / "note.jsonl"
+    reprocess = pdf_record(content_id="P1", page=1, qa_status=QAStatus.REPROCESS_REQUESTED)
+    approved = pdf_record(content_id="P2", page=2)
+    write_jsonl([reprocess, approved], path)
+
+    result = normalize_content_kb.run(kb_config, allow_pending=True)
+    assert result["docs"] == 1  # only the approved one — reprocess_requested never included
+
+
 def test_qa_score_survives_normalization_and_chunking(kb_config):
     path = kb_config.ocr_output_dir / "note.jsonl"
     write_jsonl([pdf_record()], path)

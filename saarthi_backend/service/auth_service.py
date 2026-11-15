@@ -16,7 +16,7 @@ from saarthi_backend.utils.password import hash_password, verify_password
 
 def _user_to_response(user: User) -> UserResponse:
     role = (user.role or "").strip().lower()
-    if role not in ("teacher", "admin"):
+    if role not in ("teacher", "admin", "qa_reviewer"):
         role = "student"
     return UserResponse(
         id=str(user.id),
