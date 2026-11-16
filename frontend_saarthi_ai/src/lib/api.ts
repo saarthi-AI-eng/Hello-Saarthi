@@ -50,6 +50,11 @@ export function authFetch(url: string, init: RequestInit = {}): Promise<Response
   );
 }
 
+/** Full URL of an API path such as `/progress/class/export`, for use with authFetch. */
+export function apiUrl(path: string): string {
+    return getBaseUrl() + (path.startsWith('/') ? path : '/' + path);
+}
+
 /** Turn upload path (e.g. /uploads/xxx) into full URL for storing in DB. */
 export function getUploadFullUrl(path: string): string {
     const base = getBaseUrl();

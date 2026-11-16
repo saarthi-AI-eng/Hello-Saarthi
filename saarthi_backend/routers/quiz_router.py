@@ -285,6 +285,10 @@ async def submit_attempt(
         db, quiz_id, attempt_id, user.id, answers=body.answers
     )
     await db.commit()
+    # Tell the course teacher when this attempt drops the student below the at-risk threshold.
+    from saarthi_backend.service import progress_service
+    if await progress_service.alert_if_at_risk(db, user, await _get_quiz_or_404(db, quiz_id)):
+        await db.commit()
     return _attempt_to_response(attempt, results)
 
 

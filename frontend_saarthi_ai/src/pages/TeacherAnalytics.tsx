@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, Target, TriangleAlert, Users, Award } from 'lucide-react';
 import { api } from '../lib/api';
+import ClassPerformance from './ClassPerformance';
 import './Progress.css';
 
 interface CourseStat {
@@ -92,6 +93,8 @@ export default function TeacherAnalytics() {
                     </div>
                 )}
             </div>
+
+            <ClassPerformance />
 
             <div className="progress-section animate-fade-in delay-300">
                 <h3><BookOpen size={18} /> Courses</h3>
