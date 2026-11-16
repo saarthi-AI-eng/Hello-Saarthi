@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from saarthi_backend.deps import get_current_user, get_db
 from saarthi_backend.model import User
 from saarthi_backend.schema.user_schemas import ProgressResponse, UserProfileResponse, UserProfileUpdate
-from saarthi_backend.service import user_service
+from saarthi_backend.service import progress_service, user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -38,7 +38,7 @@ async def get_my_progress(
         pendingAssignments=pending,
         avgQuizScorePercent=avg_score,
         studyTimeHours=0.0,
-        streakDays=0,
+        streakDays=await progress_service.streak_days(db, user.id),
     )
 
 

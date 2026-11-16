@@ -8,6 +8,7 @@ from . import quiz_service
 from . import user_service
 from . import video_service
 from . import qa_review_service
+from . import progress_service
 
 __all__ = [
     "auth_service",

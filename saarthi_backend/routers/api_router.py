@@ -8,6 +8,7 @@ from saarthi_backend.routers.chat_router import router as chat_router
 from saarthi_backend.routers.code_router import router as code_router
 from saarthi_backend.routers.course_router import router as course_router
 from saarthi_backend.routers.kb_router import router as kb_router
+from saarthi_backend.routers.progress_router import router as progress_router
 from saarthi_backend.routers.data_router import router as data_router
 from saarthi_backend.routers.note_router import router as note_router
 from saarthi_backend.routers.notification_router import router as notification_router
@@ -35,3 +36,4 @@ api_router.include_router(study_guide_router)
 api_router.include_router(admin_router)
 api_router.include_router(qa_review_router)
 api_router.include_router(kb_router)
+api_router.include_router(progress_router)

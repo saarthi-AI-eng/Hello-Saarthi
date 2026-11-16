@@ -9,6 +9,7 @@ import type { LucideIcon } from 'lucide-react';
 import './Sidebar.css';
 import { LogoIcon } from '../LogoIcon';
 import { useAuthStore } from '../../stores/auth.store';
+import { api, type ProgressResponse } from '../../lib/api';
 
 interface NavItem {
     path: string;
@@ -101,6 +102,15 @@ export default function Sidebar() {
     const isTeacher = role === 'teacher';
     const isQAReviewer = role === 'qa_reviewer';
     const orderKey = isTeacher ? `${STORAGE_KEY}-teacher` : isQAReviewer ? `${STORAGE_KEY}-qa-reviewer` : STORAGE_KEY;
+
+    // Real streak: consecutive days with a quiz, Code Lab submit or AI Tutor question.
+    const [streak, setStreak] = useState<number | null>(null);
+    useEffect(() => {
+        if (isTeacher || isQAReviewer) return;
+        api.get<ProgressResponse>('/users/me/progress')
+            .then((p) => setStreak(p.streakDays))
+            .catch(() => setStreak(null));
+    }, [isTeacher, isQAReviewer, location.pathname]);
 
     // Draggable nav items
     const [navItems, setNavItems] = useState<NavItem[]>(() =>
@@ -206,8 +216,12 @@ export default function Sidebar() {
                         <div className="sidebar-study-card">
                             <div className="sidebar-study-icon"><Flame size={18} /></div>
                             <div>
-                                <p className="sidebar-study-title">5 Day Streak!</p>
-                                <p className="sidebar-study-sub">Keep learning daily</p>
+                                <p className="sidebar-study-title">
+                                    {streak ? `${streak} Day Streak!` : 'Start a streak'}
+                                </p>
+                                <p className="sidebar-study-sub">
+                                    {streak ? 'Keep learning daily' : 'Take a quiz or ask the tutor today'}
+                                </p>
                             </div>
                         </div>
                     )}
