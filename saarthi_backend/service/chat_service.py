@@ -138,6 +138,41 @@ def _apply_video_context(
     return f'"{video_title}" has no indexed transcript yet. Question: {message}', False
 
 
+async def _kb_chat_reply(message: str, history: list[dict]) -> str | None:
+    """Answer from the fixed knowledge base (src/knowledge_base/gemini_rag.py) when its index is built.
+
+    Returns None to fall back to the original chat pipeline: index missing, or CHAT_SOURCE=legacy.
+    Sources are appended as "[Source: file, p.N]" lines, which the Chat page shows as badges.
+    """
+    import os
+    from fastapi.concurrency import run_in_threadpool
+    from src.knowledge_base import gemini_rag
+
+    if os.environ.get("CHAT_SOURCE", "kb").lower() == "legacy" or not gemini_rag.index_ready():
+        return None
+    # Strip earlier source lines so they do not crowd the model's context.
+    clean = [
+        {"role": m["role"], "content": m["content"].split("\n\n**Sources**")[0]}
+        for m in history
+    ]
+    try:
+        result = await run_in_threadpool(lambda: gemini_rag.answer(message.strip(), 5, clean))
+    except Exception as e:  # noqa: BLE001 - Gemini quota / overload / key errors
+        logger.warning("KB chat failed: %s", e)
+        msg = str(e)
+        if "429" in msg or "quota" in msg.lower():
+            return "The Gemini free-tier limit was reached. Wait a minute and ask again."
+        if "503" in msg or "overloaded" in msg.lower() or "high demand" in msg.lower():
+            return "Gemini is busy right now. Ask again in a few seconds."
+        return "I could not reach Gemini to answer from the notes. Check the API key settings."
+    lines = []
+    for s in result["sources"]:
+        name = (s.get("sourceFile") or "Notes").split("/")[-1]
+        page = f", p.{s['page']}" if s.get("page") else ""
+        lines.append(f"[{s['n']}] [Source: {name}{page}]")
+    return result["answer"].strip() + ("\n\n**Sources**\n" + "\n".join(lines) if lines else "")
+
+
 async def send_message(
     db: AsyncSession,
     conversation_id: int,
@@ -152,12 +187,16 @@ async def send_message(
     existing = await ChatMessageDAO.list_by_conversation(db, conversation_id)
     user_msg = await ChatMessageDAO.create(db, conversation_id, "user", message)
     history = [{"role": m.role, "content": m.content} for m in existing]
-    prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
-    history.append({"role": "user", "content": prompt_for_ai})
-    if is_grounded:
-        assistant_content = await run_document_chat(prompt_for_ai, history[:-1])
+    kb_reply = await _kb_chat_reply(message, history)
+    if kb_reply is not None:
+        assistant_content = kb_reply
     else:
-        assistant_content = await run_chat(prompt_for_ai, history, mind_mode=False)
+        prompt_for_ai, is_grounded = _apply_document_context(message, context_material_title, course_id=course_id)
+        history.append({"role": "user", "content": prompt_for_ai})
+        if is_grounded:
+            assistant_content = await run_document_chat(prompt_for_ai, history[:-1])
+        else:
+            assistant_content = await run_chat(prompt_for_ai, history, mind_mode=False)
     assistant_msg = await ChatMessageDAO.create(db, conversation_id, "assistant", assistant_content)
     if len(existing) == 0:
         title = (message.strip()[:200] + "…") if len(message.strip()) > 200 else message.strip()

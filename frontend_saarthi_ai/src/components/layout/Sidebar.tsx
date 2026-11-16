@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard, BookOpen, MessageSquare, Code2,
     BarChart3, Settings, ChevronLeft, ChevronRight,
-    GraduationCap, Eye, Flame, BookMarked, GripVertical, ClipboardCheck
+    GraduationCap, Eye, Flame, BookMarked, GripVertical, ClipboardCheck, BookOpenCheck
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import './Sidebar.css';
@@ -26,12 +26,15 @@ const DEFAULT_NAV_ITEMS: NavItem[] = [
     { path: '/videos', label: 'Video Library', icon: Eye },
     { path: '/progress', label: 'Analytics', icon: BarChart3 },
     { path: '/study-material', label: 'Study Materials', icon: BookMarked },
+    { path: '/ask-notes', label: 'Ask the Notes', icon: BookOpenCheck },
 ];
 
 const TEACHER_NAV_ITEMS: NavItem[] = [
     { path: '/progress', label: 'Class Analytics', icon: BarChart3 },
     { path: '/courses', label: 'My Courses', icon: BookOpen },
     { path: '/videos', label: 'Video Library', icon: Eye },
+    { path: '/code-lab', label: 'Coding Lab', icon: Code2 },
+    { path: '/ask-notes', label: 'Ask the Notes', icon: BookOpenCheck },
 ];
 
 const QA_REVIEWER_NAV_ITEMS: NavItem[] = [
@@ -47,6 +50,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
     '/videos': Eye,
     '/progress': BarChart3,
     '/study-material': BookMarked,
+    '/ask-notes': BookOpenCheck,
     '/qa-review': ClipboardCheck,
 };
 

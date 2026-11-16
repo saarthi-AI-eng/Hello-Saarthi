@@ -19,6 +19,7 @@ import StudyMaterialPage from './pages/StudyMaterial';
 import SearchPage from './pages/Search';
 import SettingsPage from './pages/settings/Settings';
 import QAReviewPage from './pages/QAReview';
+import AskNotesPage from './pages/AskNotes';
 import { useAuthStore } from './stores/auth.store';
 import './stores/settings.store'; // Initialize settings (theme/font) on load
 
@@ -50,13 +51,15 @@ function App() {
           <Route path="/courses/:id" element={<CourseDetailPage />} />
           <Route path="/chat" element={<StudentOnly><ChatPage /></StudentOnly>} />
           <Route path="/quiz" element={<StudentOnly><QuizPage /></StudentOnly>} />
-          <Route path="/code-lab" element={<StudentOnly><CodeLabPage /></StudentOnly>} />
+          {/* Teachers use it too: they review their students' submissions here. */}
+          <Route path="/code-lab" element={<CodeLabPage />} />
           <Route path="/videos" element={<VideosPage />} />
           <Route path="/videos/:id" element={<VideoPlayerPage />} />
           <Route path="/progress" element={<ProgressPage />} />
           <Route path="/notes" element={<Navigate to="/study-material" replace />} />
           <Route path="/study-material" element={<StudentOnly><StudyMaterialPage /></StudentOnly>} />
           <Route path="/search" element={<SearchPage />} />
+          <Route path="/ask-notes" element={<AskNotesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/qa-review" element={<QAReviewerOnly><QAReviewPage /></QAReviewerOnly>} />
         </Route>

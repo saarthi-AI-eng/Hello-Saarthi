@@ -3,6 +3,7 @@ import { Send, Sparkles, User, Bot, Loader2, BookOpen, Lightbulb, Code2, Graduat
 import { api, type ConversationResponse, type ConversationDetailResponse, type SendMessageResponse, type PaginatedResponse } from '../lib/api';
 import ConfirmModal from '../components/ConfirmModal';
 import EmptyState from '../components/EmptyState';
+import { renderAnswer } from '../lib/renderAnswer';
 import './Chat.css';
 
 const GREETING = "Hello! I'm Saarthi, your AI learning companion. I specialize in:\n\n• **Digital Signal Processing** - FFT, filters, transforms\n• **Machine Learning** - Neural networks, optimization\n• **Data Structures** - Trees, graphs, algorithms\n• **Pattern Recognition** - Classification, feature extraction\n\nHow can I help you today?";
@@ -279,6 +280,10 @@ export default function ChatPage() {
                                                             <code>{part}</code>
                                                         </pre>
                                                     );
+                                                }
+                                                if (msg.role === 'assistant') {
+                                                    // Equations, lists, bold and [Source: …] badges from the knowledge-base answers.
+                                                    return <div key={i} className="chat-msg-rich">{renderAnswer(part, 'chat-msg-bullet')}</div>;
                                                 }
                                                 return (
                                                     <div key={i}>

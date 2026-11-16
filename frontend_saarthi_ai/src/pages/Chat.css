@@ -190,6 +190,19 @@
     margin: 0.25rem 0;
 }
 
+.chat-msg-rich p {
+    margin: 0.25rem 0;
+}
+
+.chat-msg-rich .chat-msg-bullet {
+    padding-left: 1rem;
+}
+
+.chat-msg-rich .katex-display {
+    overflow-x: auto;
+    margin: 0.5rem 0;
+}
+
 .chat-source {
     display: inline-flex;
     align-items: center;
