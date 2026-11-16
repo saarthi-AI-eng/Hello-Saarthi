@@ -253,3 +253,36 @@ class SearchResponse(BaseModel):
     totalCourses: int = 0
     totalMaterials: int = 0
     totalVideos: int = 0
+
+
+class ModuleResponse(BaseModel):
+    """A Classwork topic (course module)."""
+
+    id: str
+    courseId: str
+    title: str
+    sortOrder: int
+
+
+class ModuleCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=128)
+
+
+class ModuleUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=128)
+    sortOrder: Optional[int] = None
+
+
+class BookmarkResponse(BaseModel):
+    id: str
+    courseId: str
+    itemType: str
+    itemId: str
+    title: str
+    createdAt: str
+
+
+class BookmarkCreate(BaseModel):
+    itemType: str = Field(..., pattern="^(material|video|assignment|quiz)$")
+    itemId: str = Field(..., min_length=1, max_length=64)
+    title: str = Field(..., min_length=1, max_length=255)

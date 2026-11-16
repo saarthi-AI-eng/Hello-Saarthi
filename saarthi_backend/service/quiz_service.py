@@ -79,6 +79,7 @@ async def submit_attempt(
             selectedIndex=selected.get(str(q.id)),
             correctIndex=q.correct_index,
             isCorrect=selected.get(str(q.id)) == q.correct_index,
+            explanation=q.explanation,
         )
         for q in questions
     ]

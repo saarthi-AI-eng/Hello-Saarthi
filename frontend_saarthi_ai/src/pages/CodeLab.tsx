@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Play, RotateCcw, Copy, Check, ChevronDown, Terminal, Activity, FileText, Square, Loader2 } from 'lucide-react';
-import { api } from '../lib/api';
+import { useSearchParams } from 'react-router-dom';
+import { Play, RotateCcw, Copy, Check, ChevronDown, Terminal, Activity, Square, Loader2, Send, ListChecks, History } from 'lucide-react';
+import { api, type CodeProblemResponse, type CodeSubmitResponse, type CodeSubmissionItem } from '../lib/api';
+import { useAuthStore } from '../stores/auth.store';
 import GraphOutput from '../components/GraphOutput';
 import './CodeLab.css';
 
@@ -243,35 +245,83 @@ func main() {
 }`,
 };
 
-// ─── API response shape ──────────────────────────────────────────────────────
+// ─── API response shape (POST /code/execute) ─────────────────────────────────
 interface CodeExecuteResponse {
-    success: boolean;
-    language: string;
-    stage: string;
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-    output: string;
-    error?: string;
-    status?: string;
-    time?: string;
-    memory?: number;
+    result: {
+        stdout: string;
+        stderr: string;
+        exitCode: number;
+        language: string;
+        runtime: string;
+        executionMs?: number | null;
+    };
 }
+
+const DIFFICULTY_BADGE: Record<string, string> = { easy: 'badge-success', medium: 'badge-warning', hard: 'badge-error' };
 
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function CodeLabPage() {
+    const isTeacher = useAuthStore((st) => st.user?.role === 'teacher' || st.user?.role === 'admin');
+    const [params, setParams] = useSearchParams();
+    const [problems, setProblems] = useState<CodeProblemResponse[]>([]);
+    const [problemsError, setProblemsError] = useState<string | null>(null);
+    const problem = problems.find((pr) => String(pr.id) === params.get('problem')) ?? problems[0] ?? null;
+    const [submissions, setSubmissions] = useState<CodeSubmissionItem[]>([]);
+    const [testResult, setTestResult] = useState<CodeSubmitResponse | null>(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [language, setLanguage] = useState('python');
     const [code, setCode] = useState(STARTER_CODE['python']);
     const [output, setOutput] = useState('Click "Run Code" to execute...');
     const [isRunning, setIsRunning] = useState(false);
     const [copied, setCopied] = useState(false);
     const [showLangDropdown, setShowLangDropdown] = useState(false);
-    const [activeTab, setActiveTab] = useState<'console' | 'graph'>('console');
+    const [activeTab, setActiveTab] = useState<'console' | 'graph' | 'tests'>('console');
     const [showGraph, setShowGraph] = useState(false);
     const [graphData, setGraphData] = useState<{ freq: number; mag: number }[]>([]);
     const [executionTime, setExecutionTime] = useState<number | null>(null);
     const abortRef = useRef<AbortController | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
+
+    const starterFor = useCallback((lang: string, pr: CodeProblemResponse | null) =>
+        pr?.starterCode?.[lang] ?? STARTER_CODE[lang] ?? `// ${lang} code here\n`, []);
+
+    useEffect(() => {
+        api.get<CodeProblemResponse[]>('/code/problems')
+            .then(setProblems)
+            .catch((e) => setProblemsError(e instanceof Error ? e.message : 'Could not load problems'));
+    }, []);
+
+    // A new problem: load its starter code, its submissions and clear old results.
+    const problemId = problem?.id;
+    useEffect(() => {
+        if (!problemId) return;
+        const pr = problems.find((x) => x.id === problemId) ?? null;
+        setCode(starterFor(language, pr));
+        setTestResult(null);
+        setOutput('Click "Run Code" to execute...');
+        setShowGraph(false);
+        setExecutionTime(null);
+        api.get<CodeSubmissionItem[]>(`/code/problems/${problemId}/submissions`).then(setSubmissions).catch(() => setSubmissions([]));
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the problem changes
+    }, [problemId]);
+
+    const submitSolution = async () => {
+        if (!problem || isSubmitting) return;
+        setIsSubmitting(true);
+        setActiveTab('tests');
+        try {
+            const res = await api.post<CodeSubmitResponse>(`/code/problems/${problem.id}/submit`, { language, code });
+            setTestResult(res);
+            const mine = await api.get<CodeSubmissionItem[]>(`/code/problems/${problem.id}/submissions`).catch(() => null);
+            if (mine) setSubmissions(mine);
+        } catch (e) {
+            setTestResult(null);
+            setOutput(`❌ Could not submit:\n\n${e instanceof Error ? e.message : 'Network error'}`);
+            setActiveTab('console');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -333,41 +383,34 @@ export default function CodeLabPage() {
         try {
             abortRef.current = new AbortController();
 
-            const result = await api.post<CodeExecuteResponse>('/code/execute', {
+            // explainOnError needs the AI key; the console shows the raw error instead.
+            const { result } = await api.post<CodeExecuteResponse>('/code/execute', {
                 language,
                 code,
+                explainOnError: false,
             });
+            const success = result.exitCode === 0;
 
             const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
             setExecutionTime(parseFloat(elapsed));
-
-            if (result.error) {
-                setOutput(`❌ Error: ${result.error}\n`);
-                return;
-            }
 
             // Build output string
             let out = '';
 
             // Show runtime info
-            out += `🔧 Runtime: ${result.language}\n`;
-            if (result.time) out += `⏱ CPU Time: ${result.time}s`;
-            if (result.memory) out += `  |  💾 Memory: ${(result.memory / 1024).toFixed(1)} MB`;
-            if (result.time || result.memory) out += '\n';
+            out += `🔧 Runtime: ${result.runtime || result.language}\n`;
+            if (result.executionMs != null) out += `⏱ Time: ${(result.executionMs / 1000).toFixed(2)}s\n`;
             out += `${'─'.repeat(50)}\n`;
 
-            if (result.stage === 'compile' && !result.success) {
-                out += `❌ Compilation Error:\n\n`;
-                out += result.stderr || result.output || 'Unknown compilation error';
-            } else if (!result.success) {
+            if (!success) {
                 if (result.stdout) {
                     out += result.stdout;
                     if (!result.stdout.endsWith('\n')) out += '\n';
                 }
-                out += `\n❌ ${result.status || 'Runtime Error'}:\n`;
-                out += result.stderr || result.output || 'Unknown error';
+                out += `\n❌ Error (exit code ${result.exitCode}):\n`;
+                out += result.stderr || 'Unknown error';
             } else {
-                out += result.stdout || result.output || '(no output)';
+                out += result.stdout || '(no output)';
                 if (result.stderr) {
                     out += `\n\n⚠️ Warnings:\n${result.stderr}`;
                 }
@@ -377,9 +420,9 @@ export default function CodeLabPage() {
 
             setOutput(out);
 
-            if (result.success) {
+            if (success) {
                 // Prefer dynamic plot data embedded in stdout; fall back to hardcoded template
-                const rawOutput = result.stdout || result.output || '';
+                const rawOutput = result.stdout || '';
                 const dynamic = parsePlotData(rawOutput);
                 setGraphData(dynamic && dynamic.length > 0 ? dynamic : generateGraphData());
                 setShowGraph(true);
@@ -411,7 +454,7 @@ export default function CodeLabPage() {
 
     const changeLang = (langId: string) => {
         setLanguage(langId);
-        setCode(STARTER_CODE[langId] || `// ${langId} code here\n`);
+        setCode(starterFor(langId, problem));
         setShowLangDropdown(false);
         setOutput('Click "Run Code" to execute...');
         setShowGraph(false);
@@ -426,46 +469,98 @@ export default function CodeLabPage() {
             {/* Problem Panel */}
             <div className="codelab-problem">
                 <div className="codelab-problem-header">
-                    <div>
-                        <h2>Filter Design</h2>
-                        <span className="text-xs text-gray-500">DSP Module 3</span>
+                    <div className="codelab-problem-picker">
+                        <label htmlFor="codelab-problem-select" className="text-xs text-gray-500">Problem</label>
+                        <select
+                            id="codelab-problem-select"
+                            className="input"
+                            value={problem?.id ?? ''}
+                            onChange={(e) => setParams({ problem: e.target.value })}
+                        >
+                            {problems.map((pr) => <option key={pr.id} value={pr.id}>{pr.title}</option>)}
+                        </select>
                     </div>
                 </div>
                 <div className="codelab-problem-body">
-                    <div className="problem-meta">
-                        <span className="badge badge-warning">Medium</span>
-                        <span className="text-xs text-gray-500">Points: 50</span>
-                    </div>
+                    {problemsError && <p>{problemsError}</p>}
+                    {!problem && !problemsError && <p>Loading problems…</p>}
+                    {problem && (
+                        <>
+                            <h2 className="codelab-problem-title">{problem.title}</h2>
+                            <div className="problem-meta">
+                                <span className={`badge ${DIFFICULTY_BADGE[problem.difficulty] ?? 'badge-warning'}`}>{problem.difficulty}</span>
+                                <span className="text-xs text-gray-500">Points: {problem.points}</span>
+                                {problem.topics && <span className="text-xs text-gray-500">{problem.topics}</span>}
+                            </div>
 
-                    <p>Create a program to compute the frequency response of a low-pass Butterworth filter.</p>
+                            <p>{problem.description}</p>
 
-                    <h4>Requirements:</h4>
-                    <ul>
-                        <li><strong>Order:</strong> 4</li>
-                        <li><strong>Cutoff Frequency:</strong> 1000 Hz</li>
-                        <li><strong>Sampling Rate:</strong> 8000 Hz</li>
-                        <li><strong>Output:</strong> Magnitude Response (dB vs Hz)</li>
-                    </ul>
+                            {problem.requirements.length > 0 && (
+                                <>
+                                    <h4>Requirements:</h4>
+                                    <ul>{problem.requirements.map((r) => <li key={r}>{r}</li>)}</ul>
+                                </>
+                            )}
 
-                    <h4>Expected Output:</h4>
-                    <ul>
-                        <li>Table of magnitude vs frequency</li>
-                        <li>-3dB point exactly at 1000 Hz</li>
-                        <li>-20dB/decade roll-off after cutoff</li>
-                    </ul>
+                            {problem.testCases.length > 0 && (
+                                <>
+                                    <h4><ListChecks size={14} /> Test cases ({problem.testCases.length}):</h4>
+                                    {problem.testCases.map((tc, i) => (
+                                        <div key={i} className="codelab-testcase">
+                                            {tc.hidden ? <em>Test {i + 1}: hidden</em> : (
+                                                <>
+                                                    {tc.input ? <p><strong>Input:</strong></p> : null}
+                                                    {tc.input ? <pre>{tc.input}</pre> : null}
+                                                    <p><strong>Expected output:</strong></p>
+                                                    <pre>{tc.expectedOutput}</pre>
+                                                </>
+                                            )}
+                                        </div>
+                                    ))}
+                                </>
+                            )}
 
-                    <div className="codelab-buttons-stack">
-                        <button className="btn btn-outline btn-sm w-full gap-2">
-                            <FileText size={14} /> Read Solution
-                        </button>
-                        <button className="btn btn-outline btn-sm w-full gap-2" onClick={() => {
-                            setGraphData(generateGraphData());
-                            setShowGraph(true);
-                            setActiveTab('graph');
-                        }}>
-                            <Activity size={14} /> Show Graph Template
-                        </button>
-                    </div>
+                            <div className="codelab-buttons-stack">
+                                {problem.title.toLowerCase().includes('butterworth') && (
+                                    <button className="btn btn-outline btn-sm w-full gap-2" onClick={() => {
+                                        setGraphData(generateGraphData());
+                                        setShowGraph(true);
+                                        setActiveTab('graph');
+                                    }}>
+                                        <Activity size={14} /> Show Graph Template
+                                    </button>
+                                )}
+                            </div>
+
+                            {problem.hints.length > 0 && (
+                                <details className="codelab-hint">
+                                    <summary>Hints ({problem.hints.length})</summary>
+                                    <ul>{problem.hints.map((h) => <li key={h}>{h}</li>)}</ul>
+                                </details>
+                            )}
+
+                            <h4><History size={14} /> {isTeacher ? 'Student submissions' : 'Your submissions'}</h4>
+                            {submissions.length === 0 ? (
+                                <p className="text-xs text-gray-500">{isTeacher ? 'No submissions from your students yet.' : 'Submit your code to run the tests and send it to your teacher.'}</p>
+                            ) : (
+                                <ul className="codelab-submissions">
+                                    {submissions.map((sub) => (
+                                        <li key={sub.id}>
+                                            <button
+                                                type="button"
+                                                title="Open this code in the editor"
+                                                onClick={() => { setLanguage(sub.language); setCode(sub.code); setActiveTab('console'); }}
+                                            >
+                                                <span className={sub.passed === sub.total ? 'codelab-pass' : 'codelab-fail'}>{sub.passed}/{sub.total}</span>
+                                                {isTeacher && <span className="codelab-sub-name">{sub.studentName}</span>}
+                                                <span className="codelab-sub-meta">{sub.language} · {new Date(sub.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </>
+                    )}
 
                     <h4>Supported Languages:</h4>
                     <div className="codelab-supported-langs">
@@ -475,11 +570,7 @@ export default function CodeLabPage() {
                             </span>
                         ))}
                     </div>
-
-                    <h4>Hints:</h4>
-                    <div className="codelab-hint">
-                        <p>Write your code in <strong>any supported language</strong>. The compiler will detect and run it using the correct runtime. MATLAB code runs on <strong>GNU Octave</strong>.</p>
-                    </div>
+                    <p className="text-xs text-gray-500">MATLAB code runs on GNU Octave when it is installed on the server.</p>
                 </div>
             </div>
 
@@ -515,7 +606,7 @@ export default function CodeLabPage() {
                             {copied ? <Check size={14} /> : <Copy size={14} />}
                             {copied ? 'Copied' : 'Copy'}
                         </button>
-                        <button className="btn btn-ghost btn-sm" onClick={() => { setCode(STARTER_CODE[language] || ''); setOutput('Click "Run Code" to execute...'); setShowGraph(false); setExecutionTime(null); }}>
+                        <button className="btn btn-ghost btn-sm" onClick={() => { setCode(starterFor(language, problem)); setOutput('Click "Run Code" to execute...'); setShowGraph(false); setExecutionTime(null); }}>
                             <RotateCcw size={14} /> Reset
                         </button>
                         {isRunning ? (
@@ -525,6 +616,11 @@ export default function CodeLabPage() {
                         ) : (
                             <button className="btn btn-success btn-sm" onClick={runCode}>
                                 <Play size={14} /> Run Code
+                            </button>
+                        )}
+                        {problem && !isTeacher && (
+                            <button className="btn btn-primary btn-sm" disabled={isSubmitting || isRunning} onClick={submitSolution}>
+                                {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} {isSubmitting ? 'Testing…' : 'Submit'}
                             </button>
                         )}
                     </div>
@@ -560,10 +656,40 @@ export default function CodeLabPage() {
                             <Activity size={14} /> Graph Output
                             {showGraph && <span className="w-2 h-2 rounded-full bg-green-500 ml-2 animate-pulse"></span>}
                         </button>
+                        <button
+                            className={`output-tab ${activeTab === 'tests' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('tests')}
+                        >
+                            <ListChecks size={14} /> Test Results
+                            {testResult && <span className={testResult.passed === testResult.total ? 'codelab-pass' : 'codelab-fail'}>{testResult.passed}/{testResult.total}</span>}
+                        </button>
                     </div>
 
                     <div className="codelab-output-content">
-                        {activeTab === 'console' ? (
+                        {activeTab === 'tests' ? (
+                            isSubmitting ? (
+                                <pre className="codelab-console-text">⏳ Running your code against each test case…</pre>
+                            ) : testResult ? (
+                                <div className="codelab-test-results">
+                                    <p className={testResult.passed === testResult.total ? 'codelab-pass' : 'codelab-fail'}>
+                                        {testResult.passed === testResult.total ? '✅ All tests passed.' : `❌ ${testResult.passed} of ${testResult.total} tests passed.`} Your teacher has been notified.
+                                    </p>
+                                    {testResult.results.map((r) => (
+                                        <div key={r.index} className="codelab-test-result">
+                                            <strong>{r.passed ? '✅' : '❌'} Test {r.index}{r.hidden ? ' (hidden)' : ''}</strong>
+                                            {!r.hidden && !r.passed && (
+                                                <div className="codelab-test-diff">
+                                                    <div><span>Expected</span><pre>{r.expectedOutput}</pre></div>
+                                                    <div><span>Your output</span><pre>{r.actualOutput || '(no output)'}{r.stderr ? `\n${r.stderr}` : ''}</pre></div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <pre className="codelab-console-text">Click "Submit" to run your code against the test cases.</pre>
+                            )
+                        ) : activeTab === 'console' ? (
                             <pre className="codelab-console-text">{output}</pre>
                         ) : (
                             showGraph ? (

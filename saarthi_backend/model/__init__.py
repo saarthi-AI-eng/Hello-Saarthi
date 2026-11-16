@@ -1,13 +1,13 @@
 # Models package
 from .context_model import Base
 from .user_model import RefreshToken, User
-from .course_model import Course, Enrollment, Assignment, AssignmentSubmission, Material, StreamItem, StreamComment, ClassroomInvite
+from .course_model import Course, Enrollment, Assignment, AssignmentSubmission, Material, StreamItem, StreamComment, ClassroomInvite, CourseModule, Bookmark
 from .video_model import Video, VideoProgress, VideoNote
 from .quiz_model import Quiz, QuizQuestion, QuizAttempt
 from .note_model import Note
 from .notification_model import Notification
 from .chat_model import Conversation, ChatMessage
-from .code_problem_model import CodeProblem
+from .code_problem_model import CodeProblem, CodeSubmission
 from .study_guide_model import StudyGuide, StudyGuidePrompt
 from .qa_review_model import QAReviewAction
 
@@ -34,6 +34,9 @@ __all__ = [
     "Note",
     "Notification",
     "CodeProblem",
+    "CodeSubmission",
+    "CourseModule",
+    "Bookmark",
     "StudyGuide",
     "StudyGuidePrompt",
     "QAReviewAction",

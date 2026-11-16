@@ -146,6 +146,99 @@ export interface SubmissionResponse {
   grade?: number | null;
 }
 
+export type QuizDifficulty = 'recall' | 'application' | 'analysis';
+
+export interface QuizResponse {
+  id: string;
+  courseId?: string | null;
+  title: string;
+  description?: string | null;
+  durationMinutes: number;
+  passingScore: number;
+  questionCount: number;
+  topic?: string | null;
+  attemptCount: number;
+  bestScore?: number | null;
+}
+
+export interface QuizQuestionResponse {
+  id: string;
+  questionText: string;
+  optionsJson: string;
+  correctIndex?: number | null;
+  sortOrder: number;
+  topic?: string | null;
+  difficulty: QuizDifficulty;
+  explanation?: string | null;
+}
+
+export interface QuizDetailResponse extends QuizResponse {
+  questions: QuizQuestionResponse[];
+}
+
+export interface QuizAttemptResponse {
+  id: string;
+  quizId: string;
+  score?: number | null;
+  startedAt: string;
+  submittedAt?: string | null;
+  correctCount?: number | null;
+  totalQuestions?: number | null;
+  results?: { questionId: string; selectedIndex?: number | null; correctIndex: number; isCorrect: boolean; explanation?: string | null }[] | null;
+}
+
+/** A Classwork topic (course module). */
+export interface ModuleResponse {
+  id: string;
+  courseId: string;
+  title: string;
+  sortOrder: number;
+}
+
+export interface BookmarkResponse {
+  id: string;
+  courseId: string;
+  itemType: 'material' | 'video' | 'assignment' | 'quiz';
+  itemId: string;
+  title: string;
+  createdAt: string;
+}
+
+export interface CodeProblemResponse {
+  id: number;
+  title: string;
+  difficulty: string;
+  points: number;
+  description: string;
+  requirements: string[];
+  expectedOutput?: string | null;
+  hints: string[];
+  starterCode: Record<string, string>;
+  topics?: string | null;
+  sortOrder: number;
+  testCases: { input?: string | null; expectedOutput?: string | null; hidden: boolean }[];
+}
+
+export interface CodeSubmitResponse {
+  id: number;
+  passed: number;
+  total: number;
+  results: { index: number; passed: boolean; hidden: boolean; input?: string | null; expectedOutput?: string | null; actualOutput?: string | null; stderr?: string | null }[];
+  createdAt: string;
+}
+
+export interface CodeSubmissionItem {
+  id: number;
+  problemId: number;
+  userId: number;
+  studentName: string;
+  language: string;
+  code: string;
+  passed: number;
+  total: number;
+  createdAt: string;
+}
+
 export interface MaterialResponse {
   id: string;
   courseId: string;
@@ -230,6 +323,7 @@ export interface VideoResponse {
   embedUrl?: string;
   chaptersJson?: string;
   sortOrder: number;
+  topic?: string | null;
 }
 
 export interface VideoNoteResponse {

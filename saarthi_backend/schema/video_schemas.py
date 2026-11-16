@@ -17,6 +17,7 @@ class VideoResponse(BaseModel):
     chaptersJson: Optional[str] = None
     sortOrder: int
     hasTranscript: bool = False
+    topic: Optional[str] = None
 
     class Config:
         populate_by_name = True
@@ -32,6 +33,7 @@ class VideoCreate(BaseModel):
     embedUrl: Optional[str] = None
     chaptersJson: Optional[str] = None
     sortOrder: int = 0
+    topic: Optional[str] = Field(None, max_length=128)
 
 
 class VideoProgressResponse(BaseModel):

@@ -134,3 +134,29 @@ class StreamComment(Base):
     author: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CourseModule(Base):
+    """A Classwork topic (module). Items link to it by its title in their `topic` field."""
+
+    __tablename__ = "saarthi_course_modules"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("saarthi_courses.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Bookmark(Base):
+    """A student's saved course item (material, video, assignment or quiz)."""
+
+    __tablename__ = "saarthi_bookmarks"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("saarthi_users.id", ondelete="CASCADE"), nullable=False, index=True)
+    course_id: Mapped[int] = mapped_column(ForeignKey("saarthi_courses.id", ondelete="CASCADE"), nullable=False, index=True)
+    item_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    item_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

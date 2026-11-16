@@ -22,11 +22,11 @@ _PROBLEMS = [
         ],
         "expected_output": (
             "Freq (Hz) | Magnitude (dB)\n"
-            "       0  |   0.00\n"
-            "     500  |  -0.97\n"
-            "    1000  |  -3.01\n"
-            "    2000  | -18.06\n"
-            "    4000  | -48.13"
+            "       0  |    0.00\n"
+            "     500  |   -0.02\n"
+            "    1000  |   -3.01\n"
+            "    2000  |  -24.10\n"
+            "    4000  |  -48.16"
         ),
         "hints": [
             "H(f) = 1 / sqrt(1 + (f/fc)^(2n))",
@@ -104,9 +104,9 @@ _PROBLEMS = [
             "Print final MSE",
         ],
         "expected_output": (
-            "Slope: 0.60\n"
-            "Intercept: 2.20\n"
-            "MSE: 0.56"
+            "Slope: 0.70\n"
+            "Intercept: 1.85\n"
+            "MSE: 0.50"
         ),
         "hints": [
             "MSE = mean((y_pred - y_true)^2)",
@@ -176,6 +176,7 @@ async def seed_code_problems(db: AsyncSession) -> None:
     count_result = await db.execute(select(func.count()).select_from(CodeProblem))
     count = count_result.scalar_one()
     if count > 0:
+        await _add_test_cases(db)
         # Existing laptops already have the numpy Butterworth starter — rewrite it
         # so Run no longer dies with ModuleNotFoundError.
         rows = (await db.execute(select(CodeProblem))).scalars().all()
@@ -208,3 +209,23 @@ async def seed_code_problems(db: AsyncSession) -> None:
         db.add(problem)
 
     await db.commit()
+    await _add_test_cases(db)
+
+
+async def _add_test_cases(db: AsyncSession) -> None:
+    """Give seeded problems a test case built from their (corrected) expected output.
+
+    The first seed had wrong expected outputs for the Butterworth and regression
+    problems; those are replaced too. Problems a teacher already gave test cases keep them.
+    """
+    rows = (await db.execute(select(CodeProblem))).scalars().all()
+    changed = False
+    for row in rows:
+        fresh = next((p for p in _PROBLEMS if p["title"] == row.title), None)
+        if not fresh or row.test_cases_json:
+            continue
+        row.expected_output = fresh["expected_output"]
+        row.test_cases_json = json.dumps([{"input": "", "expectedOutput": fresh["expected_output"], "hidden": False}])
+        changed = True
+    if changed:
+        await db.commit()

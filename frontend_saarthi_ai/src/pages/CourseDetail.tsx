@@ -3,14 +3,15 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Plus, FileText, Video, BookOpen, Trash2, X, Save, Paperclip,
     Link as LinkIcon, Heading, Pencil, ExternalLink, Send, Sparkles, Users,
-    Mail, LogIn, CheckCircle2, XCircle
+    Mail, LogIn, CheckCircle2, XCircle, ListChecks, Bookmark, ChevronUp, ChevronDown
 } from 'lucide-react';
 import { useAuthStore } from '../stores/auth.store';
 import StreamComments from '../components/StreamComments';
 import AssignmentDialog from '../components/AssignmentDialog';
 import AuthImage from '../components/AuthImage';
+import QuizEditor from '../components/QuizEditor';
 import { formatDue, isClosed, statusLabel, toDateTimeLocal } from '../lib/assignmentStatus';
-import { api, authFetch, getAllPages, uploadFile, getUploadFullUrl, getMaterialFileUrl, type CourseResponse, type PaginatedResponse, type AssignmentResponse, type MaterialResponse, type StreamItemResponse, type CoursePersonResponse, type VideoResponse } from '../lib/api';
+import { api, authFetch, getAllPages, uploadFile, getUploadFullUrl, getMaterialFileUrl, type CourseResponse, type PaginatedResponse, type AssignmentResponse, type MaterialResponse, type StreamItemResponse, type CoursePersonResponse, type VideoResponse, type ModuleResponse, type BookmarkResponse, type QuizResponse } from '../lib/api';
 import Pagination from '../components/Pagination';
 import FileDropzone from '../components/FileDropzone';
 import ConfirmModal from '../components/ConfirmModal';
@@ -41,7 +42,7 @@ interface Material {
     id: string;
     title: string;
     description: string;
-    type: 'pdf' | 'doc' | 'link' | 'slide';
+    type: 'pdf' | 'doc' | 'link' | 'slide' | 'exercise' | 'code';
     url: string;
     createdAt: string;
     topic: string;
@@ -61,7 +62,7 @@ interface VideoLecture {
 
 interface StreamItem {
     id: string;
-    type: 'assignment' | 'material' | 'video' | 'announcement';
+    type: 'assignment' | 'material' | 'video' | 'quiz' | 'announcement';
     title: string;
     description: string;
     createdAt: string;
@@ -80,6 +81,24 @@ const tabs = [
 ];
 
 type ModalType = 'assignment' | 'material' | 'video' | 'topic' | null;
+
+/** Classwork filter: resource types A notes, B video, C exercise, D code, plus work and bookmarks. */
+const CLASSWORK_FILTERS = [
+    { id: 'all', label: 'All' },
+    { id: 'notes', label: 'Notes' },
+    { id: 'video', label: 'Videos' },
+    { id: 'exercise', label: 'Exercises' },
+    { id: 'code', label: 'Code' },
+    { id: 'assignment', label: 'Assignments' },
+    { id: 'quiz', label: 'Quizzes' },
+    { id: 'bookmarked', label: 'Bookmarked' },
+] as const;
+type ClassworkFilter = typeof CLASSWORK_FILTERS[number]['id'];
+
+function itemKind(item: { itemType: string; type?: string }): ClassworkFilter {
+    if (item.itemType === 'material') return item.type === 'exercise' || item.type === 'code' ? item.type : 'notes';
+    return item.itemType as ClassworkFilter;
+}
 
 function mapAssignment(a: AssignmentResponse): Assignment {
     return {
@@ -124,7 +143,7 @@ function mapVideo(v: VideoResponse): VideoLecture {
         url: v.url,
         watched: false,
         createdAt: '',
-        topic: 'Video Lectures',  // videos have no topic column yet
+        topic: v.topic ?? 'No topic',
     };
 }
 
@@ -190,7 +209,13 @@ export default function CourseDetailPage() {
     const [peopleTotal, setPeopleTotal] = useState(0);
     const [peopleOffset, setPeopleOffset] = useState(0);
     const [videos, setVideos] = useState<VideoLecture[]>([]);
-    const [topics, setTopics] = useState<string[]>(['Course Materials', 'Class Work', 'Projects', 'Video Lectures', 'Post Exam - Solutions']);
+    const [quizzes, setQuizzes] = useState<QuizResponse[]>([]);
+    // Classwork topics (course modules), saved on the server in order.
+    const [modules, setModules] = useState<ModuleResponse[]>([]);
+    const topics = modules.map((m) => m.title);
+    const [bookmarks, setBookmarks] = useState<BookmarkResponse[]>([]);
+    const [classworkFilter, setClassworkFilter] = useState<ClassworkFilter>('all');
+    const [showQuizEditor, setShowQuizEditor] = useState(false);
 
     const courseDisplay = course ? { title: course.title, code: course.code, instructor: course.instructor, emoji: course.thumbnailEmoji || '📚', color: course.color || '#3f4244' } : { title: '…', code: '', instructor: '', emoji: '📚', color: '#3f4244' };
     const userName = user?.name || (isInstructor ? courseDisplay.instructor : 'Student');
@@ -235,14 +260,86 @@ export default function CourseDetailPage() {
         return () => { cancelled = true; };
     }, [courseId]);
 
-    // Topics live on the items; keep any topic that an item uses so it survives a reload.
+    // Topics (modules), quizzes and the user's bookmarks for this course.
     useEffect(() => {
-        const used = [...assignments, ...materials].map((i) => i.topic).filter((t) => t && t !== 'No topic');
-        setTopics((prev) => {
-            const extra = used.filter((t, i) => !prev.includes(t) && used.indexOf(t) === i);
-            return extra.length ? [...prev, ...extra] : prev;
-        });
-    }, [assignments, materials]);
+        if (!courseId) return;
+        let cancelled = false;
+        api.get<ModuleResponse[]>(`/courses/${courseId}/modules`)
+            .then((r) => { if (!cancelled) setModules(r); })
+            .catch(() => { if (!cancelled) setModules([]); });
+        getAllPages<QuizResponse>('/quizzes', { course_id: courseId })
+            .then((r) => { if (!cancelled) setQuizzes(r); })
+            .catch(() => { if (!cancelled) setQuizzes([]); });
+        api.get<BookmarkResponse[]>('/courses/my/bookmarks', { course_id: courseId })
+            .then((r) => { if (!cancelled) setBookmarks(r); })
+            .catch(() => { if (!cancelled) setBookmarks([]); });
+        return () => { cancelled = true; };
+    }, [courseId]);
+
+    const bookmarkFor = (itemType: string, itemId: string) => bookmarks.find((b) => b.itemType === itemType && b.itemId === itemId);
+
+    const toggleBookmark = async (item: { id: string; itemType: BookmarkResponse['itemType']; title: string }) => {
+        const existing = bookmarkFor(item.itemType, item.id);
+        try {
+            if (existing) {
+                await api.delete(`/courses/${courseId}/bookmarks/${existing.id}`);
+                setBookmarks((prev) => prev.filter((b) => b.id !== existing.id));
+            } else {
+                const b = await api.post<BookmarkResponse>(`/courses/${courseId}/bookmarks`, { itemType: item.itemType, itemId: item.id, title: item.title });
+                setBookmarks((prev) => [b, ...prev]);
+            }
+        } catch (e) {
+            toast.showToast(e instanceof Error ? e.message : 'Could not update bookmark', 'error');
+        }
+    };
+
+    /** Items keep their topic by name, so renaming or deleting a topic updates them here too. */
+    const retopicItems = (from: string, to: string) => {
+        const move = <T extends { topic: string }>(list: T[]) => list.map((x) => (x.topic === from ? { ...x, topic: to } : x));
+        setAssignments(move);
+        setMaterials(move);
+        setVideos(move);
+        setQuizzes((prev) => prev.map((q) => (q.topic === from ? { ...q, topic: to === 'No topic' ? null : to } : q)));
+    };
+
+    const renameModule = async (m: ModuleResponse) => {
+        const title = window.prompt('Rename topic', m.title)?.trim();
+        if (!title || title === m.title) return;
+        try {
+            const updated = await api.patch<ModuleResponse>(`/courses/${courseId}/modules/${m.id}`, { title });
+            setModules((prev) => prev.map((x) => (x.id === m.id ? updated : x)));
+            retopicItems(m.title, updated.title);
+        } catch (e) {
+            toast.showToast(e instanceof Error ? e.message : 'Could not rename topic', 'error');
+        }
+    };
+
+    const deleteModule = async (m: ModuleResponse) => {
+        if (!window.confirm(`Delete the topic "${m.title}"? Its work stays in the course under "No topic".`)) return;
+        try {
+            await api.delete(`/courses/${courseId}/modules/${m.id}`);
+            setModules((prev) => prev.filter((x) => x.id !== m.id));
+            retopicItems(m.title, 'No topic');
+        } catch (e) {
+            toast.showToast(e instanceof Error ? e.message : 'Could not delete topic', 'error');
+        }
+    };
+
+    /** Swap a topic with its neighbour and save both positions. */
+    const moveModule = async (index: number, delta: -1 | 1) => {
+        const other = index + delta;
+        if (other < 0 || other >= modules.length) return;
+        const next = [...modules];
+        [next[index], next[other]] = [next[other], next[index]];
+        const ordered = next.map((m, i) => ({ ...m, sortOrder: i }));
+        setModules(ordered);
+        try {
+            await Promise.all([index, other].map((i) =>
+                api.patch(`/courses/${courseId}/modules/${ordered[i].id}`, { sortOrder: i })));
+        } catch (e) {
+            toast.showToast(e instanceof Error ? e.message : 'Could not reorder topics', 'error');
+        }
+    };
 
     useEffect(() => {
         if (!courseId) return;
@@ -381,10 +478,18 @@ export default function CourseDetailPage() {
 
     const handleSave = async () => {
         if (modalType === 'topic') {
-            if (formData.title && !topics.includes(formData.title)) {
-                setTopics([...topics, formData.title]);
+            const title = formData.title?.trim();
+            if (!title) {
+                toast.showToast('Enter a topic name', 'error');
+                return;
             }
-            setModalType(null);
+            try {
+                const created = await api.post<ModuleResponse>(`/courses/${courseId}/modules`, { title });
+                setModules((prev) => [...prev, created]);
+                setModalType(null);
+            } catch (e) {
+                toast.showToast(e instanceof Error ? e.message : 'Could not add topic', 'error');
+            }
             return;
         }
         if (modalType === 'material' && courseId) {
@@ -465,6 +570,7 @@ export default function CourseDetailPage() {
                     description: formData.description?.trim() || undefined,
                     durationSeconds: parseDuration(formData.duration),
                     courseId: Number(courseId),
+                    topic: formData.topic && formData.topic !== 'No topic' ? formData.topic : undefined,
                 });
                 setVideos((prev) => [mapVideo(saved), ...prev]);
                 void refreshStream();
@@ -476,12 +582,15 @@ export default function CourseDetailPage() {
         setModalType(null);
     };
 
-    const handleDeleteWork = async (item: { id: string; itemType: 'assignment' | 'video'; title: string }) => {
+    const handleDeleteWork = async (item: { id: string; itemType: 'assignment' | 'video' | 'quiz'; title: string }) => {
         if (!window.confirm(`Delete "${item.title}"?`)) return;
         try {
             if (item.itemType === 'assignment') {
                 await api.delete(`/courses/${courseId}/assignments/${item.id}`);
                 setAssignments((prev) => prev.filter((a) => a.id !== item.id));
+            } else if (item.itemType === 'quiz') {
+                await api.delete(`/quizzes/${item.id}`);
+                setQuizzes((prev) => prev.filter((q) => q.id !== item.id));
             } else {
                 await api.delete(`/videos/${item.id}`);
                 setVideos((prev) => prev.filter((v) => v.id !== item.id));
@@ -663,6 +772,15 @@ export default function CourseDetailPage() {
     // ── Stream posts ──
     const [openPostId, setOpenPostId] = useState<string | null>(null);
 
+    /** Students take the quiz; the teacher sees its questions and answers on the quiz page too. */
+    const openQuiz = (quizId: string) => {
+        if (isInstructor) {
+            toast.showToast('Students take this quiz from Classwork or Exam Practice.');
+            return;
+        }
+        navigate(`/quiz?id=${quizId}&from=course`);
+    };
+
     /** Open what a post is about: the announcement itself, or the assignment / material / video it announces. */
     const openStreamPost = (item: StreamItem) => {
         if (item.type === 'assignment') {
@@ -678,6 +796,10 @@ export default function CourseDetailPage() {
             const v = videos.find((x) => x.title === item.description);
             if (v) { navigate(`/videos/${v.id}`); return; }
         }
+        if (item.type === 'quiz') {
+            const q = quizzes.find((x) => x.title === item.description);
+            if (q) { openQuiz(q.id); return; }
+        }
         // Announcements, and classwork that has since been deleted, open in the post view.
         setOpenPostId(item.id);
     };
@@ -692,6 +814,7 @@ export default function CourseDetailPage() {
                         {item.type === 'assignment' && <FileText size={16} color="white" />}
                         {item.type === 'material' && <BookOpen size={16} color="white" />}
                         {item.type === 'video' && <Video size={16} color="white" />}
+                        {item.type === 'quiz' && <ListChecks size={16} color="white" />}
                     </div>
                 )}
             </div>
@@ -754,6 +877,17 @@ export default function CourseDetailPage() {
     videos.forEach(v => {
         const topic = v.topic && topics.includes(v.topic) ? v.topic : 'No topic';
         itemsByTopic[topic].push({ ...v, itemType: 'video' });
+    });
+    quizzes.forEach(q => {
+        const topic = q.topic && topics.includes(q.topic) ? q.topic : 'No topic';
+        itemsByTopic[topic].push({ ...q, itemType: 'quiz' });
+    });
+    // Content browser: show one kind of resource, or only bookmarked ones.
+    Object.keys(itemsByTopic).forEach((t) => {
+        itemsByTopic[t] = itemsByTopic[t].filter((item) =>
+            classworkFilter === 'all' ? true
+                : classworkFilter === 'bookmarked' ? !!bookmarkFor(item.itemType, item.id)
+                    : itemKind(item) === classworkFilter);
     });
 
     if (courseLoading && !course) {
@@ -912,6 +1046,7 @@ export default function CourseDetailPage() {
                                         <button onClick={() => openModal('assignment')}><FileText size={16} /> Assignment</button>
                                         <button onClick={() => openModal('material')}><BookOpen size={16} /> Material</button>
                                         <button onClick={() => openModal('video')}><Video size={16} /> Video Lecture</button>
+                                        <button onClick={() => { setCreateMenuOpen(false); setShowQuizEditor(true); }}><ListChecks size={16} /> Quiz</button>
                                         <div className="cd-divider"></div>
                                         <button onClick={() => openModal('topic')}><Heading size={16} /> Topic</button>
                                     </div>
@@ -923,15 +1058,46 @@ export default function CourseDetailPage() {
                         )}
                     </div>
 
+                    <div className="cd-cw-filters" role="group" aria-label="Show only">
+                        {CLASSWORK_FILTERS.map((f) => (
+                            <button
+                                key={f.id}
+                                type="button"
+                                className={`cd-cw-filter ${classworkFilter === f.id ? 'active' : ''}`}
+                                aria-pressed={classworkFilter === f.id}
+                                onClick={() => setClassworkFilter(f.id)}
+                            >
+                                {f.id === 'bookmarked' && <Bookmark size={13} />} {f.label}
+                            </button>
+                        ))}
+                    </div>
+
                     <div className="cd-topics-view">
+                        {classworkFilter !== 'all' && Object.values(itemsByTopic).every((list) => list.length === 0) && (
+                            <div className="cd-cw-empty">
+                                {classworkFilter === 'bookmarked' ? 'No bookmarks yet. Use the bookmark icon on any item to save it here.' : 'Nothing of this type in the course yet.'}
+                            </div>
+                        )}
                         {topics.concat('No topic').map(topic => {
                             const items = itemsByTopic[topic];
-                            if (!isInstructor && items.length === 0 && topic !== 'No topic') return null; // hide empty topics for students
+                            if ((!isInstructor || classworkFilter !== 'all') && items.length === 0 && topic !== 'No topic') return null; // hide empty topics for students and while filtering
                             if (topic === 'No topic' && items.length === 0) return null;
+                            const moduleIndex = modules.findIndex((m) => m.title === topic);
+                            const module = modules[moduleIndex];
 
                             return (
                                 <div key={topic} className="cd-topic-group">
-                                    <h2 className="cd-topic-title">{topic}</h2>
+                                    <div className="cd-topic-head">
+                                        <h2 className="cd-topic-title">{topic}</h2>
+                                        {isInstructor && module && classworkFilter === 'all' && (
+                                            <div className="cd-topic-actions">
+                                                <button type="button" className="btn-icon" title="Move up" aria-label={`Move ${topic} up`} disabled={moduleIndex === 0} onClick={() => moveModule(moduleIndex, -1)}><ChevronUp size={16} /></button>
+                                                <button type="button" className="btn-icon" title="Move down" aria-label={`Move ${topic} down`} disabled={moduleIndex === modules.length - 1} onClick={() => moveModule(moduleIndex, 1)}><ChevronDown size={16} /></button>
+                                                <button type="button" className="btn-icon" title="Rename" aria-label={`Rename ${topic}`} onClick={() => renameModule(module)}><Pencil size={15} /></button>
+                                                <button type="button" className="btn-icon" title="Delete topic" aria-label={`Delete ${topic}`} onClick={() => deleteModule(module)}><Trash2 size={15} /></button>
+                                            </div>
+                                        )}
+                                    </div>
                                     <div className="cd-topic-items">
                                         {items.map(item => (
                                             <div key={item.id} className="cd-cw-item">
@@ -940,20 +1106,38 @@ export default function CourseDetailPage() {
                                                         {item.itemType === 'assignment' && <FileText size={18} color="white" />}
                                                         {item.itemType === 'material' && <BookOpen size={18} color="white" />}
                                                         {item.itemType === 'video' && <Video size={18} color="white" />}
+                                                        {item.itemType === 'quiz' && <ListChecks size={18} color="white" />}
                                                     </div>
-                                                    {item.itemType === 'material' || item.itemType === 'assignment' ? (
-                                                        <button
-                                                            type="button"
-                                                            className="cd-cw-title cd-cw-title-link"
-                                                            onClick={() => (item.itemType === 'assignment' ? setOpenAssignmentId(item.id) : setViewingMaterial(item))}
-                                                        >
-                                                            {item.title}
-                                                        </button>
-                                                    ) : (
-                                                        <span className="cd-cw-title">{item.title}</span>
+                                                    <button
+                                                        type="button"
+                                                        className="cd-cw-title cd-cw-title-link"
+                                                        onClick={() => {
+                                                            if (item.itemType === 'assignment') setOpenAssignmentId(item.id);
+                                                            else if (item.itemType === 'material') setViewingMaterial(item);
+                                                            else if (item.itemType === 'video') navigate(`/videos/${item.id}`);
+                                                            else openQuiz(item.id);
+                                                        }}
+                                                    >
+                                                        {item.title}
+                                                    </button>
+                                                    {item.itemType === 'material' && (item.type === 'exercise' || item.type === 'code') && (
+                                                        <span className="badge badge-info">{item.type === 'exercise' ? 'Exercise' : 'Code'}</span>
                                                     )}
                                                 </div>
                                                 <div className="cd-cw-item-right">
+                                                    {item.itemType === 'quiz' && (
+                                                        <>
+                                                            <span className="cd-cw-due">
+                                                                {item.questionCount} questions · {item.durationMinutes} min
+                                                                {!isInstructor && item.attemptCount > 0 && ` · best ${Math.round(item.bestScore ?? 0)}%`}
+                                                            </span>
+                                                            {!isInstructor && (
+                                                                <button className="btn btn-outline btn-sm" onClick={() => openQuiz(item.id)}>
+                                                                    {item.attemptCount > 0 ? 'Retake' : 'Start'}
+                                                                </button>
+                                                            )}
+                                                        </>
+                                                    )}
                                                     {item.itemType === 'assignment' && (
                                                         <>
                                                             <span className="cd-cw-due">Due {formatDue(item.dueDate)}</span>
@@ -1000,6 +1184,21 @@ export default function CourseDetailPage() {
                                                         </>
                                                     )}
                                                     {item.itemType !== 'material' && isInstructor && <button type="button" className="btn-icon" title="Delete" onClick={() => handleDeleteWork(item)}><Trash2 size={16} /></button>}
+                                                    {(() => {
+                                                        const saved = !!bookmarkFor(item.itemType, item.id);
+                                                        return (
+                                                            <button
+                                                                type="button"
+                                                                className={`btn-icon cd-bookmark-btn ${saved ? 'saved' : ''}`}
+                                                                title={saved ? 'Remove bookmark' : 'Bookmark'}
+                                                                aria-label={saved ? `Remove bookmark: ${item.title}` : `Bookmark ${item.title}`}
+                                                                aria-pressed={saved}
+                                                                onClick={() => toggleBookmark(item)}
+                                                            >
+                                                                <Bookmark size={16} fill={saved ? 'currentColor' : 'none'} />
+                                                            </button>
+                                                        );
+                                                    })()}
                                                 </div>
                                             </div>
                                         ))}
@@ -1105,6 +1304,8 @@ export default function CourseDetailPage() {
                                             <option value="pdf">PDF</option>
                                             <option value="doc">Document</option>
                                             <option value="slide">Slides</option>
+                                            <option value="exercise">Solved exercise</option>
+                                            <option value="code">Code (MATLAB / Python)</option>
                                         </select>
                                     </div>
                                     <div className="cd-modal-field cd-modal-field-full">
@@ -1471,6 +1672,19 @@ export default function CourseDetailPage() {
                     />
                 ) : null;
             })()}
+
+            {showQuizEditor && courseId && (
+                <QuizEditor
+                    courseId={courseId}
+                    topics={topics}
+                    onClose={() => setShowQuizEditor(false)}
+                    onCreated={(q) => {
+                        setQuizzes((prev) => [q, ...prev]);
+                        setShowQuizEditor(false);
+                        void refreshStream();
+                    }}
+                />
+            )}
 
             {/* A stream post opened on its own: full text, attachments and class comments */}
             {(() => {

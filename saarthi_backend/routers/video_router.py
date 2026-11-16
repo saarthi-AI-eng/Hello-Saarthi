@@ -36,6 +36,7 @@ def _video_to_response(v):
         chaptersJson=v.chapters_json,
         sortOrder=v.sort_order,
         hasTranscript=bool(v.transcript_text),
+        topic=v.topic,
     )
 
 
@@ -125,6 +126,7 @@ async def create_video(
         chapters_json=body.chaptersJson,
         sort_order=body.sortOrder,
     )
+    v.topic = body.topic or None
     if body.courseId:
         from saarthi_backend.service import course_service
         await course_service.create_stream_item(

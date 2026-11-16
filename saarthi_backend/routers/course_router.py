@@ -11,10 +11,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, UploadFile, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse, JSONResponse
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from saarthi_backend.deps import get_current_user, get_db, get_pagination
-from saarthi_backend.model import User
+from saarthi_backend.model import Assignment, Bookmark, CourseModule, Material, Quiz, User, Video
 from saarthi_backend.schema.course_schemas import (
     AssignmentCreate,
     AssignmentResponse,
@@ -22,6 +23,11 @@ from saarthi_backend.schema.course_schemas import (
     GradeRequest,
     SubmissionResponse,
     AssignmentUpdate,
+    BookmarkCreate,
+    BookmarkResponse,
+    ModuleCreate,
+    ModuleResponse,
+    ModuleUpdate,
     CourseCreate,
     CourseUpdate,
     CoursePersonResponse,
@@ -67,7 +73,11 @@ _UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 _MAX_UPLOAD_MB = 20  # matches the frontend dropzone and the teacher assistant
 
 # Strict allowlist for course material file types (serve + upload)
-_ALLOWED_MATERIAL_EXTENSIONS = frozenset({".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt", ".jpg", ".jpeg", ".png", ".gif", ".webp"})
+_ALLOWED_MATERIAL_EXTENSIONS = frozenset({
+    ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt", ".jpg", ".jpeg", ".png", ".gif", ".webp",
+    # Solved exercises and code (WBS content types C and D).
+    ".xls", ".xlsx", ".csv", ".m", ".py", ".ipynb",
+})
 _CHUNK_SIZE = 64 * 1024  # 64 KB for streaming
 
 
@@ -273,6 +283,20 @@ async def my_invites(
             )
         )
     return out
+
+
+@router.get("/my/bookmarks", response_model=list[BookmarkResponse])
+async def list_my_bookmarks(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    course_id: int | None = None,
+):
+    """The signed-in user's bookmarks, newest first, optionally for one course."""
+    stmt = select(Bookmark).where(Bookmark.user_id == user.id)
+    if course_id is not None:
+        stmt = stmt.where(Bookmark.course_id == course_id)
+    rows = (await db.execute(stmt.order_by(Bookmark.created_at.desc()))).scalars().all()
+    return [_bookmark_to_response(b) for b in rows]
 
 
 @router.post("/invites/{invite_id}/decline", status_code=204)
@@ -1346,3 +1370,159 @@ async def upload_file(
     dest = _UPLOAD_DIR / safe_name
     await run_in_threadpool(_write_upload_sync, dest, content)
     return {"url": f"/uploads/{safe_name}"}
+
+
+# ----- Course modules (Classwork topics) -----
+# Items (materials, assignments, videos, quizzes) link to a module by its title in their `topic`.
+
+_TOPIC_COLUMNS = ((Material, Material.topic), (Assignment, Assignment.topic), (Video, Video.topic), (Quiz, Quiz.topic))
+
+
+def _module_to_response(m) -> ModuleResponse:
+    return ModuleResponse(id=str(m.id), courseId=str(m.course_id), title=m.title, sortOrder=m.sort_order)
+
+
+def _bookmark_to_response(b) -> BookmarkResponse:
+    return BookmarkResponse(
+        id=str(b.id), courseId=str(b.course_id), itemType=b.item_type, itemId=b.item_id,
+        title=b.title, createdAt=b.created_at.isoformat() if b.created_at else "",
+    )
+
+
+async def _set_items_topic(db: AsyncSession, course_id: int, old: str, new: str | None) -> None:
+    for model, column in _TOPIC_COLUMNS:
+        await db.execute(update(model).where(model.course_id == course_id, column == old).values(topic=new))
+
+
+async def _get_module(db: AsyncSession, course_id: int, module_id: int):
+    m = await db.get(CourseModule, module_id)
+    if not m or m.course_id != course_id:
+        raise NotFoundError("Topic not found.", details=None)
+    return m
+
+
+@router.get("/{course_id}/modules", response_model=list[ModuleResponse])
+async def list_modules(
+    course_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Course topics in order. Topics used by items but not saved yet are added first."""
+    await _course_for_member(db, user, course_id)
+    modules = list((await db.execute(
+        select(CourseModule).where(CourseModule.course_id == course_id).order_by(CourseModule.sort_order, CourseModule.id)
+    )).scalars().all())
+    # Courses created before modules existed keep their topics only on the items.
+    known = {m.title for m in modules}
+    used: list[str] = []
+    for model, column in _TOPIC_COLUMNS:
+        rows = await db.execute(select(column).where(model.course_id == course_id, column.is_not(None)).distinct())
+        used += [t for (t,) in rows.all() if t and t != "No topic" and t not in known and t not in used]
+    if used:
+        next_order = (modules[-1].sort_order + 1) if modules else 0
+        for i, title in enumerate(used):
+            m = CourseModule(course_id=course_id, title=title, sort_order=next_order + i)
+            db.add(m)
+            modules.append(m)
+        await db.commit()
+    return [_module_to_response(m) for m in modules]
+
+
+@router.post("/{course_id}/modules", response_model=ModuleResponse, status_code=status.HTTP_201_CREATED)
+async def create_module(
+    course_id: int,
+    body: ModuleCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Add a topic at the end (course teacher only)."""
+    await _owned_course(db, user, course_id)
+    title = body.title.strip()
+    existing = (await db.execute(select(CourseModule).where(CourseModule.course_id == course_id))).scalars().all()
+    if any(m.title.lower() == title.lower() for m in existing) or title == "No topic":
+        raise ValidationError("A topic with this name already exists.", details=None)
+    m = CourseModule(course_id=course_id, title=title, sort_order=max((x.sort_order for x in existing), default=-1) + 1)
+    db.add(m)
+    await db.commit()
+    await db.refresh(m)
+    return _module_to_response(m)
+
+
+@router.patch("/{course_id}/modules/{module_id}", response_model=ModuleResponse)
+async def update_module(
+    course_id: int,
+    module_id: int,
+    body: ModuleUpdate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Rename a topic (its items move with it) or change its position (course teacher only)."""
+    await _owned_course(db, user, course_id)
+    m = await _get_module(db, course_id, module_id)
+    if body.title is not None and body.title.strip() != m.title:
+        title = body.title.strip()
+        others = (await db.execute(
+            select(CourseModule).where(CourseModule.course_id == course_id, CourseModule.id != module_id)
+        )).scalars().all()
+        if any(x.title.lower() == title.lower() for x in others) or title == "No topic":
+            raise ValidationError("A topic with this name already exists.", details=None)
+        await _set_items_topic(db, course_id, m.title, title)
+        m.title = title
+    if body.sortOrder is not None:
+        m.sort_order = body.sortOrder
+    await db.commit()
+    await db.refresh(m)
+    return _module_to_response(m)
+
+
+@router.delete("/{course_id}/modules/{module_id}", status_code=204)
+async def delete_module(
+    course_id: int,
+    module_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Delete a topic. Its items stay in the course under "No topic" (course teacher only)."""
+    await _owned_course(db, user, course_id)
+    m = await _get_module(db, course_id, module_id)
+    await _set_items_topic(db, course_id, m.title, None)
+    await db.delete(m)
+    await db.commit()
+
+
+# ----- Bookmarks -----
+
+@router.post("/{course_id}/bookmarks", response_model=BookmarkResponse, status_code=status.HTTP_201_CREATED)
+async def add_bookmark(
+    course_id: int,
+    body: BookmarkCreate,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Bookmark a course item. Bookmarking the same item twice returns the existing bookmark."""
+    await _course_for_member(db, user, course_id)
+    existing = (await db.execute(select(Bookmark).where(
+        Bookmark.user_id == user.id, Bookmark.item_type == body.itemType, Bookmark.item_id == body.itemId
+    ))).scalar_one_or_none()
+    if existing:
+        return _bookmark_to_response(existing)
+    b = Bookmark(user_id=user.id, course_id=course_id, item_type=body.itemType, item_id=body.itemId, title=body.title)
+    db.add(b)
+    await db.commit()
+    await db.refresh(b)
+    return _bookmark_to_response(b)
+
+
+@router.delete("/{course_id}/bookmarks/{bookmark_id}", status_code=204)
+async def delete_bookmark(
+    course_id: int,
+    bookmark_id: int,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Remove one of your bookmarks."""
+    b = await db.get(Bookmark, bookmark_id)
+    if not b or b.user_id != user.id or b.course_id != course_id:
+        raise NotFoundError("Bookmark not found.", details=None)
+    await db.delete(b)
+    await db.commit()

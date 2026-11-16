@@ -95,13 +95,18 @@ def _validate_settings_at_startup() -> None:
         )
 
 
-def _load_classroom_invites_ddl() -> list[str]:
-    sql = (_backend_dir / "migrations" / "008_classroom_invites.sql").read_text(encoding="utf-8")
+def _load_ddl(filename: str) -> list[str]:
+    sql = (_backend_dir / "migrations" / filename).read_text(encoding="utf-8")
     body = "\n".join(line for line in sql.splitlines() if not line.strip().startswith("--"))
     return [s.strip() for s in body.split(";") if s.strip()]
 
 
+def _load_classroom_invites_ddl() -> list[str]:
+    return _load_ddl("008_classroom_invites.sql")
+
+
 _CLASSROOM_INVITES_DDL = _load_classroom_invites_ddl()
+_MODULES_QUIZZES_CODE_DDL = _load_ddl("011_modules_quizzes_code.sql")
 
 
 def _load_qa_review_actions_ddl() -> list[str]:
@@ -164,6 +169,9 @@ async def lifespan(app: FastAPI):
             await conn.execute(text(stmt))
         # (see 010_qa_review_actions_edited.sql)
         await conn.execute(text("ALTER TABLE saarthi_qa_review_actions ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT FALSE"))
+        # Quiz fields, course modules, bookmarks, code test cases and submissions (011).
+        for stmt in _MODULES_QUIZZES_CODE_DDL:
+            await conn.execute(text(stmt))
     logger.info("Column migration: saarthi_videos.transcript_text ensured")
     logger.info("Table migration: saarthi_code_problems ensured")
     logger.info("Table migration: saarthi_classroom_invites ensured")
@@ -180,6 +188,9 @@ async def lifespan(app: FastAPI):
         await seed_demo_users(session)
     async with session_factory() as session:
         await seed_code_problems(session)
+    async with session_factory() as session:
+        from saarthi_backend.scripts.seed_quizzes import seed_quizzes
+        await seed_quizzes(session)
     async with session_factory() as session:
         from saarthi_backend.scripts.seed_study_guides import seed_study_guides
         await seed_study_guides(session)

@@ -41,6 +41,20 @@ class CodeExecuteResponse(BaseModel):
     aiSuggestions: list[str] = []
 
 
+class TestCase(BaseModel):
+    input: str = ""
+    expectedOutput: str
+    hidden: bool = False
+
+
+class TestCasePublic(BaseModel):
+    """A test case as students see it: hidden cases show neither input nor output."""
+
+    input: Optional[str] = None
+    expectedOutput: Optional[str] = None
+    hidden: bool = False
+
+
 class CodeProblemResponse(BaseModel):
     id: int
     title: str
@@ -53,6 +67,7 @@ class CodeProblemResponse(BaseModel):
     starterCode: dict[str, str]
     topics: Optional[str]
     sortOrder: int
+    testCases: list[TestCasePublic] = []
 
 
 class CodeProblemCreate(BaseModel):
@@ -66,6 +81,7 @@ class CodeProblemCreate(BaseModel):
     starterCode: dict[str, str] = {}
     topics: Optional[str] = None
     sortOrder: int = 0
+    testCases: list[TestCase] = []
 
 
 class CodeProblemUpdate(BaseModel):
@@ -80,3 +96,40 @@ class CodeProblemUpdate(BaseModel):
     topics: Optional[str] = None
     sortOrder: Optional[int] = None
     isActive: Optional[bool] = None
+    testCases: Optional[list[TestCase]] = None
+
+
+class CodeSubmitRequest(BaseModel):
+    language: str = Field(..., description="Language key, e.g. 'python'")
+    code: str = Field(..., min_length=1, max_length=50_000)
+
+
+class TestCaseResult(BaseModel):
+    index: int
+    passed: bool
+    hidden: bool
+    # Left out for hidden cases.
+    input: Optional[str] = None
+    expectedOutput: Optional[str] = None
+    actualOutput: Optional[str] = None
+    stderr: Optional[str] = None
+
+
+class CodeSubmitResponse(BaseModel):
+    id: int
+    passed: int
+    total: int
+    results: list[TestCaseResult]
+    createdAt: str
+
+
+class CodeSubmissionItem(BaseModel):
+    id: int
+    problemId: int
+    userId: int
+    studentName: str
+    language: str
+    code: str
+    passed: int
+    total: int
+    createdAt: str
